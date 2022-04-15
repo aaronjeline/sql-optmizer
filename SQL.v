@@ -31,6 +31,7 @@ Class Cursor c (elt : Type) :=
     collection : c -> list elt;
     visited : c -> list elt;
     coherent : c -> Prop;
+    ubound : c -> nat;
   }.
 
 
@@ -54,10 +55,21 @@ Class SafeCursor c elt `{Cursor c elt} :=
       visited c' = visited c;
     next_coherent : forall c,
       coherent c -> coherent (snd (next c));
-
     has_next_spec : forall c,
         coherent c -> ~ has_next c ->
         (collection c) = (rev (visited c));
+    has_next_next_neg : forall c,
+        coherent c ->
+        (has_next c <-> fst (next c) <> (Empty_Cursor elt));
+    reset_collection : forall c,
+        collection (reset c) = collection c;
+    reset_visited : forall c,
+        visited (reset c) = [];
+    reset_coherent : forall c,
+        coherent (reset c);
+    ubound_complate : forall c acc,
+        coherent c ->
+        ~ has_next (fst (iter next (ubound c) c acc));
 
   }.
 
@@ -75,7 +87,7 @@ Instance seqCursor (elt : Type) : Cursor (Seq elt) elt :=
     next c := match c with
                 | {| total := t; to_visit := tv; vs := vs |} =>
                     match tv with
-                      | [] => (No_Result elt, c)
+                      | [] => (Empty_Cursor elt, c)
                       | (x::xs) => (Result elt x, {| total := t; to_visit := xs; vs := x::vs |})
                     end
               end;
@@ -87,6 +99,7 @@ Instance seqCursor (elt : Type) : Cursor (Seq elt) elt :=
     collection c := total elt c;
     visited c := vs elt c;
     coherent c := total elt c = (rev (vs elt c)) ++ (to_visit elt c);
+    ubound c := length (to_visit elt c)
   }.
 
 Theorem seq_next_collection (elt : Type) :
@@ -151,12 +164,21 @@ Lemma seq_next_visited_Empty_Cursor elt : forall c c',
 Proof.
   intros.
   destruct c.
-  destruct to_visit0;
-    simpl in H0;
-    injection H0;
-    intros;
+  destruct to_visit0.
+  - simpl in H0.
+    injection H0.
+    simpl.
+    intros.
+    rewrite <- H1.
+    simpl.
+    auto.
+  - simpl in H0.
+    injection H0.
+    intros.
+    simpl in *.
     discriminate H2.
 Qed.
+
 
 
 Lemma no_result_same_seq (elt : Type) : forall (c c' : Seq elt),
@@ -271,10 +293,48 @@ Proof.
     tauto.
 Qed.
 
+Lemma seq_has_next_next_neg (elt : Type) : forall c,
+        coherent c ->
+        (has_next c <-> fst (next c) <> (Empty_Cursor elt)).
+Proof.
+  intros.
+  split.
+  - intros.
+    simpl.
+    destruct c.
+    destruct to_visit0.
+    + auto.
+    + discriminate.
+  - intros.
+    destruct c.
+    destruct to_visit0;
+      simpl in *;
+      auto.
+Qed.
+
+
+Lemma seq_ubound_complate (elt : Type) : forall (c : Seq elt) acc,
+        coherent c ->
+        ~ has_next (fst (iter next (ubound c) c acc)).
+Proof.
+  intros.
+  destruct c.
+  induction to_visit0.
+  - unfold not.
+    intros.
+    simpl in *.
+    auto.
+  - unfold not.
+    intros.
+    simpl in H.
+
+
+
+
 
 Instance seqsafe elt : SafeCursor (Seq elt) elt.
 Proof.
-  constructor; intros.
+  constructor; intros; auto.
   - apply seq_next_collection.
     auto.
   -
@@ -289,4 +349,7 @@ Proof.
   - apply seq_has_next_spec.
     auto.
     auto.
+  - apply seq_has_next_next_neg.
+    auto.
+  - simpl. auto.
 Qed.
