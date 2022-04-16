@@ -18,6 +18,15 @@ Instance optionMonad : Monad option :=
 
   }.
 
+Fixpoint nth {X : Type} (lst : list X) (n : nat) : option X :=
+  match lst with
+    | [] => None
+    | (x :: xs) =>
+        match n with
+          | 0 => Some x
+          | S n' => nth xs n'
+        end
+  end.
 
 Definition tuple := list nat.
 Record relation : Type :=
@@ -35,17 +44,102 @@ Definition coherent_relation (r : relation) : Prop :=
 Definition coherent_relations (r1 r2 : relation) : Prop :=
   coherent_relation r1 /\ coherent_relation r2 /\ order r1 = order r2.
 
+Definition boolean := bool.
+Definition relname : Type := nat.
+Definition predicate := tuple -> boolean.
+Definition select : Type := nat.
 Definition database := list relation.
+
+Definition get_relation (db : database) (n : relname) : option relation :=
+  nth db n.
+
+
+Definition schema := list nat.
 Definition coherent_database (db : database) : Prop :=
   forall r,
     In r db ->
     coherent_relation r.
+Definition compliant_relation (r : relation) (o : nat) : Prop :=
+  coherent_relation r /\ order r = o.
+Definition compliant_database (db : database) (s : schema) : Prop :=
+  forall relname (o : nat),
+    nth s relname = Some o ->
+    exists (r : relation),
+      get_relation db relname = Some r /\ compliant_relation r o.
 
-Definition boolean := bool.
-Definition relname : Type := nat.
-Definition term : Type := nat.
-Definition predicate := term -> boolean.
-Definition select : Type := nat.
+
+Lemma one_relation_per_name : forall (db : database) (name : relname) (r1 r2 : relation),
+    get_relation db name = Some r1 ->
+    get_relation db name = Some r2 ->
+    r1 = r2.
+Proof.
+  intros.
+  rewrite H0 in H.
+  injection H.
+  auto.
+Qed.
+
+
+
+Example ex_r1 : relation :=
+  {| data := [[1;1;1];[1;1;1]]; order := 3; |}.
+
+Example ex_r2 : relation :=
+  {| data := [[2;2]; [2;2]]; order := 2 |}.
+
+Example ex_db : database := [ex_r1; ex_r2].
+
+Example ex_schema : schema := [3; 2].
+
+(* TODO make proving compliance easeir *)
+Example ex_compiant : compliant_database ex_db ex_schema.
+Proof.
+  simpl.
+  unfold compliant_database.
+  intros.
+  simpl in H.
+  destruct relname0.
+  - inversion H.
+    subst.
+    exists ex_r1.
+    split.
+    + unfold get_relation.
+      simpl.
+      reflexivity.
+    + unfold compliant_relation.
+      split.
+      * unfold coherent_relation.
+        intros.
+        inversion H0.
+        rewrite <- H1.
+        auto.
+        inversion H1.
+        rewrite <- H2.
+        auto.
+        inversion H2.
+      * auto.
+  - destruct relname0.
+    + inversion H.
+      subst.
+      exists ex_r2.
+      split.
+      auto.
+      unfold compliant_relation.
+      unfold coherent_relation.
+      split.
+      intros.
+      inversion H0.
+      rewrite <- H1.
+      auto.
+      inversion H1.
+      rewrite <- H2.
+      auto.
+      inversion H2.
+      auto.
+    + simpl.
+      discriminate H.
+Qed.
+
 Inductive quantifier : Type :=
   | Forall
   | Exists.
@@ -78,23 +172,85 @@ with formula : Type :=
 
 with atom : Type :=
   | Q_True
-  | Q_Pred : predicate -> list term -> atom
+  | Q_Pred : predicate -> list tuple -> atom
   | Q_Quant :
-    quantifier -> predicate -> list term ->
+    quantifier -> predicate -> list tuple ->
     query -> atom
   | Q_In : list select -> query -> atom
   | Q_Exists : query -> atom.
 
 
-Fixpoint nth {X : Type} (lst : list X) (n : nat) : option X :=
-  match lst with
-    | [] => None
-    | (x :: xs) =>
-        match n with
-          | 0 => Some x
-          | S n' => nth xs n'
-        end
-  end.
+Inductive has_query_order : schema -> query -> nat -> Prop :=
+  | Order_Table : forall sch n o,
+      nth sch n = Some o ->
+      has_query_order sch (Q_Table n) o
+  | Order_Set : forall sch q1 q2 op o,
+      has_query_order sch q1 o ->
+      has_query_order sch q2 o ->
+      has_query_order sch (Q_Set op q1 q2) o.
+
+
+
+Fixpoint query_order (sch : schema) (q : query) : option nat :=
+    match q with
+      | Q_Table name => nth sch name
+      | Q_Set o q1 q2 =>
+        o1 <- query_order sch q1;;
+        o2 <- query_order sch q2;;
+        if o1 =? o2 then
+          Some (o1)
+        else
+          None
+
+      | _ => None
+    end.
+
+Theorem has_query_equiv : forall sch q n,
+    has_query_order sch q n <-> query_order sch q = Some n.
+Proof.
+  intros.
+  split.
+  - intros.
+    induction q;
+      (try (inversion H); try fail).
+    + simpl.
+      inversion H.
+      subst.
+      auto.
+    + inversion H.
+      subst.
+      simpl.
+      apply IHq1 in H5.
+      rewrite H5.
+      apply IHq2 in H6.
+      rewrite H6.
+      rewrite Nat.eqb_refl.
+      reflexivity.
+  - intros.
+    induction q;
+      try (simpl in H; discriminate).
+    + apply Order_Table.
+      simpl in H.
+      apply H.
+    + simpl.
+      simpl in H.
+      destruct (query_order sch q1) eqn:Hq1;
+        destruct (query_order sch q2) eqn:Hq2;
+        try (discriminate).
+      destruct (n0 =? n1) eqn:Hn.
+        * apply Order_Set.
+           ++ apply IHq1.
+              apply H.
+           ++ apply IHq2.
+              rewrite Nat.eqb_eq in Hn.
+              rewrite <- Hn.
+              apply H.
+        * discriminate.
+Qed.
+
+
+
+
 
 Fixpoint all_same_lengths {X : Type} (t : nat) (xs : list (list X)) : boolean :=
   match xs with
@@ -230,30 +386,49 @@ Ltac destruct_coherence H :=
   unfold coherent_relation in H2;
   unfold coherent_relation in H3.
 
+
+Lemma complaince_is_coherence : forall r o,
+    compliant_relation r o ->
+    coherent_relation r.
+Proof.
+  intros.
+  unfold compliant_relation in H.
+  destruct H.
+  apply H.
+Qed.
+
 Lemma union_preserves_coherence : forall (r1 r2 r' : relation),
     coherent_relations r1 r2 ->
     r' = set_union r1 r2 ->
-    coherent_relation r' /\ order r1 = order r'.
+    compliant_relation r' (order r1).
 Proof.
   intros.
   unfold coherent_relations in H.
   destruct H as [ H1 H2 ].
   destruct H2 as [ H2 H3 ].
+  unfold compliant_relation.
   unfold coherent_relation in *.
   split.
-  - intros.
-    rewrite H0 in H.
-    apply in_app_or in H.
+  - simpl.
+    intros.
+    unfold set_union in H0.
     rewrite H0.
-    destruct H.
-    + simpl.
-      apply H1.
+    simpl.
+    assert (In t (data r1) \/ In t (data r2)).
+    {
+      apply in_app_or.
+      rewrite H0 in H.
+      simpl in H.
       apply H.
-    + simpl.
-      rewrite H3.
+    }.
+    destruct H4.
+    + apply H1.
+      apply H4.
+    + rewrite H3.
       apply H2.
-      apply H.
-  - rewrite H0.
+      apply H4.
+  - unfold set_union in H0.
+    rewrite H0.
     simpl.
     reflexivity.
 Qed.
@@ -572,6 +747,12 @@ Proof.
 Qed.
 
 
+Ltac compliance_proof :=
+  unfold compliant_relation;
+  unfold coherent_relations in *;
+  unfold coherent_relation in *;
+  split.
+
 
 Definition set_intersect (r1 r2 : relation) : relation :=
   let data' := list_intersect (data r1) (data r2) in
@@ -580,25 +761,31 @@ Definition set_intersect (r1 r2 : relation) : relation :=
 Theorem intersect_preserves_coherence : forall r1 r2 r',
     coherent_relations r1 r2 ->
     r' = set_intersect r1 r2 ->
-    coherent_relation r' /\ order r1 = order r'.
+    compliant_relation r' (order r1).
 Proof.
   intros.
-  unfold coherent_relations in H.
-  destruct H.
-  destruct H1.
-  rewrite H0.
-  split.
-  - unfold coherent_relation in *.
-    intros.
+  compliance_proof.
+  - intros.
+    destruct H.
+    destruct H2.
+    unfold set_intersect in H0.
+    assert (In t (data r1) /\ In t (data r2)).
+    {
+      apply list_intersect_spec.
+      rewrite H0 in H1.
+      simpl in H1.
+      apply H1.
+    }.
+    destruct H4.
+    rewrite H0.
     simpl.
     apply H.
-    simpl in H3.
-    apply list_intersect_spec in H3.
-    destruct H3.
-    apply H3.
-  - simpl.
+    apply H4.
+  - rewrite H0.
+    simpl.
     reflexivity.
 Qed.
+
 
 Definition interp_set_op (o : set_op) (r1 r2 : relation) :=
   match o with
@@ -609,7 +796,7 @@ Definition interp_set_op (o : set_op) (r1 r2 : relation) :=
 Theorem set_ops_preserve_coherence (o : set_op) (r1 r2 r' : relation) :
   coherent_relations r1 r2 ->
   r' = interp_set_op o r1 r2 ->
-  coherent_relation r' /\ order r1 = order r'.
+  compliant_relation r' (order r1).
 Proof.
   intros.
   destruct o.
@@ -621,6 +808,173 @@ Qed.
 
 Fixpoint eval_query (q : query) (db : database) : option relation :=
   match q with
-  | Q_Table r => nth db r
+  | Q_Table r => get_relation db r
+  | Q_Set o q1 q2 =>
+        r1 <- eval_query q1 db;;
+        r2 <- eval_query q2 db;;
+        if order r1 =? order r2 then
+          Some (interp_set_op o r1 r2)
+        else
+          None
   | _ => None
   end.
+
+Lemma database_relation_order : forall db sch r n o,
+    compliant_database db sch ->
+    nth sch n = Some o ->
+    get_relation db n = Some r ->
+    compliant_relation r o.
+Proof.
+  intros.
+  unfold compliant_database in H.
+  assert
+    (exists r, get_relation db n = Some r /\ compliant_relation r o).
+  {
+    apply H.
+    auto.
+  }.
+  destruct H2 as [ r' ].
+  destruct H2.
+  assert (r = r').
+  apply one_relation_per_name with (db := db) (name := n); auto.
+  subst.
+  auto.
+Qed.
+
+Lemma compliance_is_coherence : forall r o,
+    compliant_relation r o ->
+    coherent_relation r.
+Proof.
+  intros.
+  unfold compliant_relation in H.
+  destruct H.
+  apply H.
+Qed.
+
+Theorem schema_preserves_order :
+  forall (q : query)  (db : database) (sch : schema) (o : nat) (r : relation),
+    compliant_database db sch ->
+    has_query_order sch q o ->
+    eval_query q db = Some r ->
+    compliant_relation r o.
+Proof.
+  intros q.
+  induction q; intros; try (inversion H1; fail).
+  - rename r into name.
+    inversion H0.
+    subst.
+    apply database_relation_order
+            with (db := db)
+                 (sch := sch)
+                 (n := name); auto.
+  - simpl.
+    inversion H0.
+    subst.
+    simpl in H1.
+    destruct (eval_query q1 db) eqn:Hq1;
+      destruct (eval_query q2 db) eqn:Hq2;
+      try discriminate.
+    + simpl.
+      destruct (order r0 =? order r1) eqn:Heq; try discriminate.
+        simpl.
+        rename r1 into r2.
+        rename r0 into r1.
+        apply Nat.eqb_eq in Heq.
+        assert (compliant_relation r1 o /\ compliant_relation r2 o).
+        {
+          split.
+          - apply IHq1 with (db := db) (sch := sch); auto.
+          - apply IHq2 with (db := db) (sch := sch); auto.
+        }.
+        destruct H2.
+        assert (order r1 = o).
+        {
+          unfold compliant_relation in H2.
+          destruct H2.
+          apply H4.
+        }.
+        rewrite <- H4.
+        apply set_ops_preserve_coherence with (o := s) (r2 := r2).
+        * unfold coherent_relations.
+          split.
+          apply compliance_is_coherence with (o := o).
+          auto.
+          split.
+          apply compliance_is_coherence with (o := o).
+          auto.
+          auto.
+        * injection H1.
+          intros.
+          symmetry.
+          auto.
+Qed.
+
+
+
+
+Theorem sound_schema :
+  forall (q : query) (db : database) (sch : schema) (o : nat),
+    compliant_database db sch ->
+    has_query_order sch q o ->
+    exists (r : relation),
+      eval_query q db = Some r.
+Proof.
+  intros q.
+  induction q; intros;
+    try (inversion H0).
+  - simpl.
+    unfold compliant_database in H.
+    rename r into name.
+    assert (exists r, get_relation db name = Some r /\ compliant_relation r o).
+    {
+      apply H.
+      inversion H0.
+      subst.
+      apply H3.
+    }.
+    destruct H5 as [ r ].
+    destruct H5.
+    exists r.
+    apply H5.
+  - subst.
+    assert (exists r, eval_query q1 db = Some r).
+    {
+      apply IHq1 with (sch := sch) (o := o).
+      apply H.
+      apply H6.
+    }.
+    destruct H1 as [ r1 ].
+    assert (compliant_relation r1 o).
+    {
+      apply schema_preserves_order
+              with (q := q1)
+                   (db := db)
+                   (sch := sch); auto.
+    }.
+    assert (exists r, eval_query q2 db = Some r).
+    {
+      apply IHq2 with (sch := sch) (o := o).
+      apply H.
+      auto.
+    }.
+    destruct H3 as [ r2 ].
+    assert (compliant_relation r2 o).
+    {
+      apply schema_preserves_order
+              with (q := q2)
+                   (db := db)
+                   (sch := sch); auto.
+    }.
+    simpl.
+    rewrite H1.
+    rewrite H3.
+    exists (interp_set_op s r1 r2).
+    unfold compliant_relation in H4.
+    unfold compliant_relation in H2.
+    destruct H2.
+    destruct H4.
+    rewrite H8.
+    rewrite <- H5.
+    rewrite Nat.eqb_refl.
+    reflexivity.
+Qed.
