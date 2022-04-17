@@ -873,6 +873,12 @@ Fixpoint cartesian_product (r1 r2 : list tuple) : list tuple :=
     | r::r1' => (join_column r r2) ++ (cartesian_product r1' r2)
   end.
 
+Definition join_relations (r1 r2 : relation) : relation :=
+  {|
+    data := cartesian_product (data r1) (data r2);
+    order := (order r1) + (order r2);
+  |}.
+
 
 Lemma join_order : forall (r : list tuple) (o1 o2 : nat) (t : tuple),
     length t = o1 ->
@@ -946,6 +952,44 @@ Proof.
       apply H1.
 Qed.
 
+Lemma join_order_spec : forall (r1 r2 r' : relation) (o1 o2 o' : nat),
+    compliant_relation r1 o1 ->
+    compliant_relation r2 o2 ->
+    join_relations r1 r2 = r' ->
+    o' = o1 + o2 ->
+    compliant_relation r' o'.
+Proof.
+  intros.
+  unfold compliant_relation in *.
+  unfold coherent_relation in *.
+  destruct H.
+  destruct H0.
+  split.
+  - intros.
+    unfold join_relations in H1.
+    rewrite <- H1.
+    simpl.
+    destruct r1.
+    destruct r2.
+    apply cartesian_product_order
+            with (r1 := data0)
+                 (r2 := data1).
+    intros.
+    auto.
+    intros.
+    auto.
+    rewrite <- H1 in H5.
+    simpl in H5.
+    auto.
+  - unfold join_relations in H1.
+    rewrite <- H1.
+    simpl.
+    rewrite H2.
+    rewrite H3.
+    rewrite H4.
+    reflexivity.
+Qed.
+
 Fixpoint eval_query (q : query) (db : database) : option relation :=
   match q with
   | Q_Table r => get_relation db r
@@ -959,14 +1003,7 @@ Fixpoint eval_query (q : query) (db : database) : option relation :=
   | Q_Join q1 q2 =>
       r1 <- eval_query q1 db;;
       r2 <- eval_query q2 db;;
-      if order r1 =? order r2 then
-        Some
-          {|
-            data := cartesian_product (data r1) (data r2);
-            order := order r1;
-          |}
-      else
-        None
+      Some (join_relations r1 r2)
 
   | _ => None
   end.
@@ -1068,19 +1105,20 @@ Proof.
     destruct (eval_query q1 db) eqn:Hq1;
       destruct (eval_query q2 db) eqn:Hq2;
       try discriminate.
-    destruct (order r0 =? order r1) eqn:Heq.
-    + injection H1.
-      intros.
-      clear H1.
-      rewrite <- H2.
-      unfold compliant_relation.
-      simpl.
-      split.
-      * simpl.
-        unfold coherent_relation.
-
-
-
+    injection H1.
+    intros.
+    rewrite <- H2.
+    remember (o1 + o2) as o'.
+    apply join_order_spec
+            with (r1 := r0)
+                 (r2 := r1)
+                 (o1 := o1)
+                 (o2 := o2).
+    apply IHq1 with (db := db) (sch := sch); auto.
+    apply IHq2 with (db := db) (sch := sch); auto.
+    reflexivity.
+    auto.
+Qed.
 
 (* Proof  *)
 Theorem sound_schema :
@@ -1147,5 +1185,17 @@ Proof.
     rewrite H8.
     rewrite <- H5.
     rewrite Nat.eqb_refl.
+    reflexivity.
+  - subst.
+    assert (exists r, eval_query q1 db = Some r).
+    apply IHq1 with (sch := sch) (o := o1); auto.
+    destruct H1 as [ r1 ].
+    assert (exists r, eval_query q2 db = Some r).
+    apply IHq2 with (sch := sch) (o := o2); auto.
+    destruct H2 as [ r2 ].
+    exists (join_relations r1 r2).
+    simpl.
+    rewrite H1.
+    rewrite H2.
     reflexivity.
 Qed.
