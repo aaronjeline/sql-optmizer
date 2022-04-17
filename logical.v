@@ -7,6 +7,7 @@ From Coq Require Import PeanoNat.
 Import ListNotations.
 Open Scope list_scope.
 
+
 Instance optionMonad : Monad option :=
   {
     ret T x := Some x;
@@ -18,6 +19,8 @@ Instance optionMonad : Monad option :=
 
   }.
 
+
+(* Return the nth item from the list if it exists *)
 Fixpoint nth {X : Type} (lst : list X) (n : nat) : option X :=
   match lst with
     | [] => None
@@ -29,17 +32,26 @@ Fixpoint nth {X : Type} (lst : list X) (n : nat) : option X :=
   end.
 
 Definition tuple := list nat.
+(* This is a database table *)
 Record relation : Type :=
   {
-    data : list tuple;
-    order : nat;
+    data : list tuple; (* Rows in the table *)
+    order : nat; (* number of columns in each row *)
   }.
 
 
+Example r_ex :=
+  {| data := [[1;1];[1]]; order := 3 |}.
+
+Example good_r :=
+  {| data := [[1;1;1]]; order := 3 |}.
+
+
 Definition coherent_relation (r : relation) : Prop :=
-  forall t,
+  forall (t : tuple),
     In t (data r) ->
     length t = (order r).
+
 
 Definition coherent_relations (r1 r2 : relation) : Prop :=
   coherent_relation r1 /\ coherent_relation r2 /\ order r1 = order r2.
@@ -187,7 +199,13 @@ Inductive has_query_order : schema -> query -> nat -> Prop :=
   | Order_Set : forall sch q1 q2 op o,
       has_query_order sch q1 o ->
       has_query_order sch q2 o ->
-      has_query_order sch (Q_Set op q1 q2) o.
+      has_query_order sch (Q_Set op q1 q2) o
+  | Order_Join : forall sch q1 q2 o1 o2 o,
+      has_query_order sch q1 o1 ->
+      has_query_order sch q2 o2 ->
+      o = o1 + o2 ->
+      has_query_order sch (Q_Join q1 q2) o.
+
 
 
 
@@ -201,56 +219,93 @@ Fixpoint query_order (sch : schema) (q : query) : option nat :=
           Some (o1)
         else
           None
-
+      | Q_Join q1 q2 =>
+          o1 <- query_order sch q1;;
+          o2 <- query_order sch q2;;
+          Some (o1 + o2)
       | _ => None
     end.
 
-Theorem has_query_equiv : forall sch q n,
+Theorem has_query_equiv : forall q sch n,
     has_query_order sch q n <-> query_order sch q = Some n.
 Proof.
-  intros.
-  split.
+  intros q.
+  induction q.
   - intros.
-    induction q;
-      (try (inversion H); try fail).
-    + simpl.
+    split.
+    + intros.
+      simpl.
       inversion H.
       subst.
       auto.
-    + inversion H.
-      subst.
+    + intros.
+      simpl in H.
+      apply Order_Table.
+      auto.
+  - intros.
+    split.
+    + intros.
       simpl.
+      inversion H.
+      subst.
       apply IHq1 in H5.
       rewrite H5.
       apply IHq2 in H6.
       rewrite H6.
       rewrite Nat.eqb_refl.
       reflexivity.
-  - intros.
-    induction q;
-      try (simpl in H; discriminate).
-    + apply Order_Table.
-      simpl in H.
-      apply H.
-    + simpl.
+    + intros.
       simpl in H.
       destruct (query_order sch q1) eqn:Hq1;
         destruct (query_order sch q2) eqn:Hq2;
-        try (discriminate).
-      destruct (n0 =? n1) eqn:Hn.
-        * apply Order_Set.
-           ++ apply IHq1.
-              apply H.
-           ++ apply IHq2.
-              rewrite Nat.eqb_eq in Hn.
-              rewrite <- Hn.
-              apply H.
-        * discriminate.
+        try discriminate.
+      destruct (n0 =? n1) eqn:Heq; try discriminate.
+      injection H.
+      intros.
+      apply Order_Set.
+      apply IHq1 in Hq1.
+      rewrite H0 in Hq1.
+      apply Hq1.
+      apply IHq2 in Hq2.
+      apply Nat.eqb_eq in Heq.
+      rewrite <- Heq in Hq2.
+      rewrite H0 in Hq2.
+      apply Hq2.
+  - intros.
+    split.
+    + intros.
+      inversion H.
+      subst.
+      simpl.
+      apply IHq1 in H2.
+      rewrite H2.
+      apply IHq2 in H4.
+      rewrite H4.
+      reflexivity.
+    + intros.
+      simpl in H.
+      destruct (query_order sch q1) eqn:Hq1;
+        destruct (query_order sch q2) eqn:Hq2;
+        try discriminate.
+      injection H.
+      intros.
+      apply Order_Join with (o1 := n0) (o2 := n1).
+      apply IHq1 in Hq1.
+      apply Hq1.
+      apply IHq2 in Hq2.
+      apply Hq2.
+      auto.
+  - split.
+    + intros.
+      inversion H.
+    + intros.
+      discriminate.
+  - split.
+    + intros.
+      inversion H.
+    + intros.
+      discriminate.
 Qed.
-
-
-
-
 
 Fixpoint all_same_lengths {X : Type} (t : nat) (xs : list (list X)) : boolean :=
   match xs with
@@ -804,7 +859,92 @@ Proof.
   - eapply intersect_preserves_coherence; eauto.
 Qed.
 
+Fixpoint join_column (t : tuple) (ts : list tuple) : list tuple :=
+  match ts with
+    | [] => []
+    | tup::ts' =>
+        (tup ++ t) :: (join_column t ts')
+  end.
 
+
+Fixpoint cartesian_product (r1 r2 : list tuple) : list tuple :=
+  match r1 with
+    | [] => []
+    | r::r1' => (join_column r r2) ++ (cartesian_product r1' r2)
+  end.
+
+
+Lemma join_order : forall (r : list tuple) (o1 o2 : nat) (t : tuple),
+    length t = o1 ->
+    (forall (t' : tuple), In t' r -> length t' = o2) ->
+    forall (t' : tuple),
+    In t' (join_column t r) ->
+    length t' = o1 + o2.
+Proof.
+  intros r.
+  induction r; intros.
+  - simpl in H1.
+    exfalso.
+    apply H1.
+  - simpl in H1.
+    destruct H1.
+    + simpl.
+      rewrite <- H1.
+      rewrite <- H.
+      assert (length a = o2).
+      apply H0.
+      simpl.
+      left.
+      reflexivity.
+      rewrite <- H2.
+      rewrite Nat.add_comm.
+      apply app_length.
+    + apply IHr with (t := t).
+      apply H.
+      intros.
+      apply H0.
+      simpl.
+      right.
+      apply H2.
+      apply H1.
+Qed.
+
+Lemma cartesian_product_order :
+  forall (r1 r2 : list tuple) (o1 o2 : nat),
+    (forall t, In t r1 -> length t = o1) ->
+    (forall t, In t r2 -> length t = o2) ->
+    forall t',
+      In t' (cartesian_product r1 r2) ->
+      length t' = (o1 + o2).
+Proof.
+  intros r1.
+  induction r1; intros.
+  - exfalso.
+    inversion H1.
+  - simpl in H1.
+    apply in_app_or in H1.
+    destruct H1.
+    + simpl.
+      apply join_order with
+        (r := r2)
+        (t := a).
+      apply H.
+      simpl.
+      left.
+      reflexivity.
+      apply H0.
+      apply H1.
+    + apply IHr1 with (r2 := r2).
+      intros.
+      apply H.
+      simpl.
+      right.
+      apply H2.
+      intros.
+      apply H0.
+      apply H2.
+      apply H1.
+Qed.
 
 Fixpoint eval_query (q : query) (db : database) : option relation :=
   match q with
@@ -816,8 +956,23 @@ Fixpoint eval_query (q : query) (db : database) : option relation :=
           Some (interp_set_op o r1 r2)
         else
           None
+  | Q_Join q1 q2 =>
+      r1 <- eval_query q1 db;;
+      r2 <- eval_query q2 db;;
+      if order r1 =? order r2 then
+        Some
+          {|
+            data := cartesian_product (data r1) (data r2);
+            order := order r1;
+          |}
+      else
+        None
+
   | _ => None
   end.
+
+
+
 
 Lemma database_relation_order : forall db sch r n o,
     compliant_database db sch ->
@@ -907,11 +1062,27 @@ Proof.
           intros.
           symmetry.
           auto.
-Qed.
+  - inversion H0.
+    subst.
+    simpl in H1.
+    destruct (eval_query q1 db) eqn:Hq1;
+      destruct (eval_query q2 db) eqn:Hq2;
+      try discriminate.
+    destruct (order r0 =? order r1) eqn:Heq.
+    + injection H1.
+      intros.
+      clear H1.
+      rewrite <- H2.
+      unfold compliant_relation.
+      simpl.
+      split.
+      * simpl.
+        unfold coherent_relation.
 
 
 
 
+(* Proof  *)
 Theorem sound_schema :
   forall (q : query) (db : database) (sch : schema) (o : nat),
     compliant_database db sch ->
