@@ -58,7 +58,6 @@ Definition coherent_relations (r1 r2 : relation) : Prop :=
 
 Definition boolean := bool.
 Definition relname : Type := nat.
-Definition predicate := tuple -> boolean.
 Definition select : Type := nat.
 Definition database := list relation.
 
@@ -160,11 +159,501 @@ Inductive set_op : Type :=
   | Union
   | Intersection.
 
-Inductive and_or : Type :=
-  | And
-  | Or.
+
+Inductive type : Type :=
+  | Number
+  | Boolean.
+
+Definition type_eqb t1 t2 : boolean :=
+  match t1, t2 with
+    | Number, Number => true
+    | Boolean, Boolean => true
+    | _, _ => false
+  end.
+
+Theorem type_eqb_eq : forall t1 t2,
+    type_eqb t1 t2 = true <-> t1 = t2.
+Proof.
+  split;
+    intros;
+    destruct t1,t2;
+    auto;
+    simpl in H;
+    discriminate.
+Qed.
+
+Theorem type_eqb_refl : forall t1,
+    type_eqb t1 t1 = true.
+Proof.
+  intros.
+  rewrite type_eqb_eq.
+  reflexivity.
+Qed.
+
+Inductive predicate : Type :=
+  | Literal : nat -> predicate
+  | Tru
+  | Fls
+  | And : predicate -> predicate -> predicate
+  | Or : predicate -> predicate -> predicate
+  | Equals : predicate -> predicate -> predicate
+  | Plus : predicate -> predicate -> predicate
+  | LessThan : predicate -> predicate -> predicate
+  | Field : nat -> predicate.
+
+Inductive value : Type :=
+  | VTrue
+  | VFalse
+  | VNum : nat -> value.
+
+Definition value_eqb v1 v2 : boolean :=
+  match v1, v2 with
+    | VTrue, VTrue => true
+    | VFalse, VFalse => true
+    | VNum n1, VNum n2 => n1 =? n2
+    | _, _ => false
+  end.
+
+Theorem value_eqb_eq : forall v1 v2,
+    value_eqb v1 v2 = true <-> v1 = v2.
+Proof.
+  split; intros; destruct v1, v2; auto;
+    try (simpl in H; discriminate).
+  - simpl in H.
+    apply Nat.eqb_eq in H.
+    auto.
+  - simpl.
+    apply Nat.eqb_eq.
+    injection H.
+    auto.
+Qed.
+
+Lemma value_eqb_refl : forall v,
+    value_eqb v v = true.
+Proof.
+  intros.
+  apply value_eqb_eq.
+  auto.
+Qed.
+
+Fixpoint compute_type (p : predicate) (order : nat) : option type :=
+  match p with
+    | Literal _ => Some Number
+    | Field n => if n <? order then Some Number else None
+    | Tru => Some Boolean
+    | Fls => Some Boolean
+    | Equals p1 p2 =>
+        t1 <- compute_type p1 order;;
+        t2 <- compute_type p2 order;;
+        if andb (type_eqb t1 t2) (type_eqb t1 Number) then
+          Some Boolean
+        else None
+    | Plus p1 p2 =>
+        t1 <- compute_type p1 order;;
+        t2 <- compute_type p2 order;;
+        if andb (type_eqb t1 t2) (type_eqb t1 Number) then
+          Some Number
+        else None
+    | LessThan p1 p2 =>
+        t1 <- compute_type p1 order;;
+        t2 <- compute_type p2 order;;
+        if andb (type_eqb t1 t2) (type_eqb t1 Number) then
+          Some Boolean
+        else None
+    | And p1 p2 =>
+        t1 <- compute_type p1 order;;
+        t2 <- compute_type p2 order;;
+        if andb (type_eqb t1 t2) (type_eqb t1 Boolean) then
+          Some Boolean
+        else None
+    | Or p1 p2 =>
+        t1 <- compute_type p1 order;;
+        t2 <- compute_type p2 order;;
+        if andb (type_eqb t1 t2) (type_eqb t1 Boolean) then
+          Some Boolean
+        else None
+  end.
+
+Inductive well_typed : nat -> predicate -> type -> Prop :=
+  | WT_Lit : forall n o, well_typed o (Literal n) Number
+  | WT_Field : forall i o,
+      i < o ->
+      well_typed o (Field i) Number
+  | WT_True : forall o, well_typed o (Tru) Boolean
+  | WT_False : forall o, well_typed o (Fls) Boolean
+  | WT_Plus : forall o p1 p2,
+      well_typed o p1 Number ->
+      well_typed o p2 Number ->
+      well_typed o (Plus p1 p2) Number
+  | WT_Equals : forall o p1 p2,
+      well_typed o p1 Number ->
+      well_typed o p2 Number ->
+      well_typed o (Equals p1 p2) Boolean
+  | WT_LessThan : forall o p1 p2,
+      well_typed o p1 Number ->
+      well_typed o p2 Number ->
+      well_typed o (LessThan p1 p2) Boolean
+  | WT_And : forall o p1 p2,
+      well_typed o p1 Boolean ->
+      well_typed o p2 Boolean ->
+      well_typed o (And p1 p2) Boolean
+  | WT_Or : forall o p1 p2,
+      well_typed o p1 Boolean ->
+      well_typed o p2 Boolean ->
+      well_typed o (Or p1 p2) Boolean.
+
+Theorem well_typed_computable : forall p o t,
+    well_typed o p t <-> compute_type p o = Some t.
+Proof.
+  intros p.
+  induction p; split; intros; try (inversion H; subst); auto.
+  - apply WT_Lit.
+  - apply WT_True.
+  - apply WT_False.
+  - apply IHp1 in H3.
+    apply IHp2 in H5.
+    simpl.
+    rewrite H3.
+    rewrite H5.
+    simpl.
+    reflexivity.
+  - destruct t;
+      destruct (compute_type p1 o) eqn:Hp1;
+      destruct (compute_type p2 o) eqn:Hp2;
+      try discriminate.
+    + destruct (type_eqb t t0) eqn:Hteq;
+        destruct (type_eqb t Boolean) eqn:Hbool;
+        try (simpl in H1; discriminate).
+    + destruct (type_eqb t t0) eqn:Hteq;
+        destruct (type_eqb t Boolean) eqn:Hbool;
+        try (simpl in H1; discriminate).
+      apply type_eqb_eq in Hbool.
+      apply type_eqb_eq in Hteq.
+      subst.
+      apply IHp1 in Hp1.
+      apply IHp2 in Hp2.
+      apply WT_And; auto.
+  - simpl.
+    apply IHp1 in H3.
+    apply IHp2 in H5.
+    rewrite H3.
+    rewrite H5.
+    auto.
+  - destruct t;
+      destruct (compute_type p1 o) eqn:Hp1;
+      destruct (compute_type p2 o) eqn:Hp2;
+      try discriminate.
+    + destruct (type_eqb t t0);
+        destruct (type_eqb t Boolean);
+        try discriminate.
+    + destruct (type_eqb t t0) eqn:Heq1;
+        destruct (type_eqb t Boolean) eqn:Heq2;
+        try discriminate.
+      apply type_eqb_eq in Heq1.
+      apply type_eqb_eq in Heq2.
+      subst.
+      apply IHp1 in Hp1.
+      apply IHp2 in Hp2.
+      apply WT_Or; auto.
+    - apply IHp1 in H3.
+      apply IHp2 in H5.
+      simpl.
+      rewrite H3.
+      rewrite H5.
+      auto.
+    - destruct (compute_type p1 o) eqn:Hp1;
+        destruct (compute_type p2 o) eqn:Hp2;
+        try discriminate.
+      + destruct (type_eqb t0 t1) eqn:Heq1;
+          destruct (type_eqb t0 Number) eqn:Heq2;
+          try discriminate.
+        apply type_eqb_eq in Heq1.
+        apply type_eqb_eq in Heq2.
+        subst.
+        apply IHp1 in Hp1.
+        apply IHp2 in Hp2.
+        destruct t; try (simpl in H; discriminate).
+        apply WT_Equals; auto.
+    - apply IHp1 in H3.
+      apply IHp2 in H5.
+      simpl.
+      rewrite H3.
+      rewrite H5.
+      auto.
+    - destruct (compute_type p1 o) eqn:Hp1;
+        destruct (compute_type p2 o) eqn:Hp2;
+        try discriminate.
+      destruct t;
+        destruct (type_eqb t0 t1) eqn:Heq1;
+        destruct (type_eqb t0 Number) eqn:Heq2;
+        try discriminate.
+      apply IHp1 in Hp1.
+      apply IHp2 in Hp2.
+      apply type_eqb_eq in Heq2.
+      apply type_eqb_eq in Heq1.
+      subst.
+      apply WT_Plus; auto.
+      - simpl.
+        apply IHp1 in H3.
+        apply IHp2 in H5.
+        rewrite H3.
+        rewrite H5.
+        auto.
+  - destruct (compute_type p1 o) eqn:Hp1;
+      destruct (compute_type p2 o) eqn:Hp2;
+      try discriminate.
+    destruct t;
+      destruct (type_eqb t0 t1) eqn:Heq1;
+      destruct (type_eqb t0 Number) eqn:Heq2;
+      try discriminate.
+    apply type_eqb_eq in Heq1.
+    apply type_eqb_eq in Heq2.
+    subst.
+    apply IHp1 in Hp1.
+    apply IHp2 in Hp2.
+    apply WT_LessThan; auto.
+  - simpl.
+    apply Nat.ltb_lt in H2.
+    rewrite H2.
+    reflexivity.
+  - destruct (n <? o) eqn:Hlt.
+    + injection H1.
+      intros.
+      subst.
+      apply WT_Field.
+      apply Nat.ltb_lt in Hlt.
+      auto.
+    + discriminate.
+Qed.
+
+Inductive valid_predicate : nat -> predicate -> Prop :=
+  | Valid : forall o p,
+      well_typed o p Boolean ->
+      valid_predicate o p.
+
+Definition is_valid_predicate (o : nat) (p : predicate) : boolean :=
+  match compute_type p o with
+    | None => false
+    | Some t => type_eqb t Boolean
+  end.
+
+Lemma valid_predicate_computable : forall o p,
+    valid_predicate o p <-> is_valid_predicate o p = true.
+Proof.
+  split.
+  - intros.
+    inversion H.
+    subst.
+    apply well_typed_computable in H0.
+    unfold is_valid_predicate.
+    rewrite H0.
+    auto.
+  - intros.
+    unfold is_valid_predicate in H.
+    destruct (compute_type p o) eqn:Htype.
+    + apply Valid.
+      apply well_typed_computable in Htype.
+      apply type_eqb_eq in H.
+      subst.
+      apply Htype.
+    + discriminate.
+Qed.
+
+Definition extract_field (t : tuple) (i : nat) : option nat :=
+  nth_error t i.
+
+Lemma extract_coherent_field : forall i (t : tuple) o,
+    length t = o ->
+    i < o ->
+    exists (n : nat),
+      extract_field t i = Some n.
+Proof.
+  intros.
+  destruct (extract_field t i) eqn:Heq.
+  - exists n.
+    reflexivity.
+  - exfalso.
+    unfold extract_field in Heq.
+    assert (nth_error t i <> None).
+    {
+      apply nth_error_Some.
+      rewrite <- H in H0.
+      apply H0.
+    }.
+    rewrite Heq in H1.
+    unfold not in H1.
+    apply H1.
+    reflexivity.
+Qed.
+
+Inductive predicate_value : predicate -> Prop :=
+  | LitVal : forall n, predicate_value (Literal n)
+  | TruVal : predicate_value Tru
+  | FlsVal : predicate_value Fls.
+
+(* small step semantics for predicate *)
+Inductive predicate_steps : predicate -> tuple -> predicate -> Prop :=
+  | FieldStep : forall t i n,
+      extract_field t i = Some n ->
+      predicate_steps (Field i) t (Literal n)
+  | Andvalue__true : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Tru ->
+      p2 = Tru ->
+      predicate_steps (And p1 p2) t (Tru)
+  | Andvalue__false : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Fls \/ p2 = Fls ->
+      predicate_steps (And p1 p2) t (Fls)
+  | And1 : forall p1 p1' p2 t,
+      predicate_steps p1 t p1' ->
+      predicate_steps (And p1 p2) t (And p1' p2)
+  | And2 : forall p1 p2 p2' t,
+      predicate_value p1 ->
+      predicate_steps p2 t p2' ->
+      predicate_steps (And p1 p2) t (And p1 p2')
+  | Orvalue__true : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Tru \/ p2 = Tru ->
+      predicate_steps (Or p1 p2) t (Tru)
+  | Orvalue__false : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Fls ->
+      p2 = Fls ->
+      predicate_steps (Or p1 p2) t (Fls)
+  | Or1 : forall p1 p1' p2 t,
+      predicate_steps p1 t p1' ->
+      predicate_steps (Or p1 p2) t (Or p1' p2)
+  | Or2 : forall p1 p2 p2' t,
+      predicate_value p1 ->
+      predicate_steps p2 t p2' ->
+      predicate_steps (Or p1 p2) t (Or p1 p2')
+  | Equalsvalue__true : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = p2 ->
+      predicate_steps (Equals p1 p2) t (Tru)
+  | Equalsvalue__false : forall p1 p2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 <> p2 ->
+      predicate_steps (Equals p1 p2) t (Fls)
+  | Equals1 : forall p1 p1' p2 t,
+      predicate_steps p1 t p1' ->
+      predicate_steps (Equals p1 p2) t (Equals p1' p2)
+  | Equals2 : forall p1 p2 p2' t,
+      predicate_value p1 ->
+      predicate_steps p2 t p2' ->
+      predicate_steps (Equals p1 p2) t (Equals p1 p2')
+  | LessThanvalue__true : forall p1 p2 t n1 n2,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Literal n1 ->
+      p2 = Literal n2 ->
+      n1 < n2 ->
+      predicate_steps (LessThan p1 p2) t (Tru)
+  | LessThanvalue__false : forall p1 p2 t n1 n2,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Literal n1 ->
+      p2 = Literal n2 ->
+      n1 >= n2 ->
+      predicate_steps (LessThan p1 p2) t (Fls)
+  | LessThan1 : forall p1 p1' p2 t,
+      predicate_steps p1 t p1' ->
+      predicate_steps (LessThan p1 p2) t (LessThan p1' p2)
+  | LessThan2 : forall p1 p2 p2' t,
+      predicate_value p1 ->
+      predicate_steps p2 t p2' ->
+      predicate_steps (LessThan p1 p2) t (LessThan p1 p2').
 
 
+
+(* Big Step relation *)
+Inductive predicate_bigstep : predicate -> tuple -> predicate -> Prop :=
+  | Refl : forall p1 t, predicate_bigstep p1 t p1
+  | Steps : forall p1 t p2,
+      predicate_steps p1 t p2 ->
+      predicate_bigstep p1 t p2
+  | Trans : forall p1 p2 p3 t,
+      predicate_steps p1 t p2 ->
+      predicate_steps p2 t p3 ->
+      predicate_bigstep p1 t p3.
+
+Definition make_value (p : predicate) : option value :=
+  match p with
+    | Literal n => Some (VNum n)
+    | Tru => Some VTrue
+    | Fls => Some VFalse
+    | _ => None
+  end.
+
+Lemma make_value_spec : forall p,
+    predicate_value p ->
+    exists v,
+      make_value p = Some v.
+Proof.
+  intros.
+  inversion H; simpl.
+  - exists (VNum n).
+    auto.
+  - exists VTrue.
+    auto.
+  - exists VFalse.
+    auto.
+Qed.
+
+Fixpoint eval_predicate (p : predicate) (t : tuple) : option value :=
+  match p with
+    | Literal n => Some (VNum n)
+    | Field i =>
+        fv <- extract_field t i;;
+        Some (VNum fv)
+    | Tru => Some (VTrue)
+    | Fls => Some (VFalse)
+    | And p1 p2 =>
+        v1 <- eval_predicate p1 t;;
+        v2 <- eval_predicate p2 t;;
+        match v1, v2 with
+          | VTrue, VTrue => Some VTrue
+          | VTrue, VFalse => Some VFalse
+          | VFalse, VFalse => Some VFalse
+          | VFalse, VTrue => Some VFalse
+          | _, _ => None
+        end
+    | Or p1 p2 =>
+        v1 <- eval_predicate p1 t;;
+        v2 <- eval_predicate p2 t;;
+        match v1, v2 with
+          | VTrue, VTrue => Some VTrue
+          | VTrue, VFalse => Some VTrue
+          | VFalse, VFalse => Some VFalse
+          | VFalse, VTrue => Some VTrue
+          | _, _ => None
+        end
+    | Equals p1 p2 =>
+        v1 <- eval_predicate p1 t;;
+        v2 <- eval_predicate p2 t;;
+        if value_eqb v1 v2 then Some VTrue else Some VFalse
+   | Plus p1 p2 =>
+       v1 <- eval_predicate p1 t;;
+       v2 <- eval_predicate p2 t;;
+       match v1, v2 with
+         | (VNum n1), (VNum n2) => Some (VNum (n1 + n2))
+         | _, _ => None
+        end
+   | LessThan p1 p2 =>
+       v1 <- eval_predicate p1 t;;
+       v2 <- eval_predicate p2 t;;
+       match v1, v2 with
+         | (VNum n1), (VNum n2) => Some (if n1 <? n2 then VTrue else VFalse)
+         | _, _ => None
+        end
+  end.
 
 
 Inductive query : Type :=
@@ -177,10 +666,8 @@ Inductive query : Type :=
   (* | Q_Gammma : *)
   (*   list term -> formula -> list select -> query -> query *)
 with formula : Type :=
-  | Q_Conj :
-    and_or -> formula -> formula -> formula
-  | Q_Not : formula -> formula
-  | Q_Atom : atom -> formula
+  | Q_Raw : predicate -> formula
+  (* | Q_Atom : atom -> formula *)
 
 with atom : Type :=
   | Q_True
@@ -204,7 +691,11 @@ Inductive has_query_order : schema -> query -> nat -> Prop :=
       has_query_order sch q1 o1 ->
       has_query_order sch q2 o2 ->
       o = o1 + o2 ->
-      has_query_order sch (Q_Join q1 q2) o.
+      has_query_order sch (Q_Join q1 q2) o
+  | Order_Select : forall sch q1 f o,
+      has_query_order sch q1 o ->
+      valid_predicate o f ->
+      has_query_order sch (Q_Sigma (Q_Raw f) q1) o.
 
 
 
@@ -223,6 +714,12 @@ Fixpoint query_order (sch : schema) (q : query) : option nat :=
           o1 <- query_order sch q1;;
           o2 <- query_order sch q2;;
           Some (o1 + o2)
+      | Q_Sigma (Q_Raw f) q =>
+          o <- query_order sch q;;
+          if is_valid_predicate o f then
+            Some o
+          else
+            None
       | _ => None
     end.
 
@@ -301,11 +798,28 @@ Proof.
     + intros.
       discriminate.
   - split.
+    intros.
+    + inversion H.
+      subst.
+      simpl.
+      apply IHq in H3.
+      rewrite H3.
+      apply valid_predicate_computable in H5.
+      rewrite H5.
+      reflexivity.
     + intros.
-      inversion H.
-    + intros.
-      discriminate.
+      simpl in H.
+      destruct f eqn:Hf.
+      destruct (query_order sch q) eqn:qo; try discriminate.
+      destruct (is_valid_predicate n0 p) eqn:vp; try discriminate.
+      injection H.
+      intros.
+      subst.
+      apply IHq in qo.
+      apply valid_predicate_computable in vp.
+      apply Order_Select; auto.
 Qed.
+
 
 Fixpoint all_same_lengths {X : Type} (t : nat) (xs : list (list X)) : boolean :=
   match xs with
@@ -990,6 +1504,9 @@ Proof.
     reflexivity.
 Qed.
 
+
+Definition run_formula (f : formula) (t : tuple)
+
 Fixpoint eval_query (q : query) (db : database) : option relation :=
   match q with
   | Q_Table r => get_relation db r
@@ -1004,7 +1521,9 @@ Fixpoint eval_query (q : query) (db : database) : option relation :=
       r1 <- eval_query q1 db;;
       r2 <- eval_query q2 db;;
       Some (join_relations r1 r2)
-
+  | Q_Sigma f q =>
+      r <- eval_query q db;;
+      filter f q
   | _ => None
   end.
 
