@@ -201,6 +201,7 @@ Inductive predicate : Type :=
   | LessThan : predicate -> predicate -> predicate
   | Field : nat -> predicate.
 
+
 Inductive value : Type :=
   | VTrue
   | VFalse
@@ -235,6 +236,7 @@ Proof.
   apply value_eqb_eq.
   auto.
 Qed.
+
 
 Fixpoint compute_type (p : predicate) (order : nat) : option type :=
   match p with
@@ -491,6 +493,19 @@ Inductive predicate_value : predicate -> Prop :=
   | TruVal : predicate_value Tru
   | FlsVal : predicate_value Fls.
 
+Lemma value_choice : forall p,
+    predicate_value p \/ ~ (predicate_value p).
+Proof.
+  intros.
+  induction p;
+    try (right; unfold not; intros; inversion H; fail).
+  - left. apply LitVal.
+  - left. apply TruVal.
+  - left. apply FlsVal.
+Qed.
+
+
+
 (* small step semantics for predicate *)
 Inductive predicate_steps : predicate -> tuple -> predicate -> Prop :=
   | FieldStep : forall t i n,
@@ -561,7 +576,7 @@ Inductive predicate_steps : predicate -> tuple -> predicate -> Prop :=
       predicate_value p2 ->
       p1 = Literal n1 ->
       p2 = Literal n2 ->
-      n1 >= n2 ->
+      n2 <= n1 ->
       predicate_steps (LessThan p1 p2) t (Fls)
   | LessThan1 : forall p1 p1' p2 t,
       predicate_steps p1 t p1' ->
@@ -569,7 +584,21 @@ Inductive predicate_steps : predicate -> tuple -> predicate -> Prop :=
   | LessThan2 : forall p1 p2 p2' t,
       predicate_value p1 ->
       predicate_steps p2 t p2' ->
-      predicate_steps (LessThan p1 p2) t (LessThan p1 p2').
+      predicate_steps (LessThan p1 p2) t (LessThan p1 p2')
+  | Plus__value : forall p1 n1 p2 n2 t,
+      predicate_value p1 ->
+      predicate_value p2 ->
+      p1 = Literal n1 ->
+      p2 = Literal n2 ->
+      predicate_steps (Plus p1 p2) t
+                      (Literal (n1 + n2))
+  | Plus1 : forall p1 p1' p2 t,
+      predicate_steps p1 t p1' ->
+      predicate_steps (Plus p1 p2) t (Plus p1' p2)
+  | Plus2 : forall p1 p2 p2' t,
+      predicate_value p1 ->
+      predicate_steps p2 t p2' ->
+      predicate_steps (Plus p1 p2) t (Plus p1 p2').
 
 
 
@@ -580,8 +609,8 @@ Inductive predicate_bigstep : predicate -> tuple -> predicate -> Prop :=
       predicate_steps p1 t p2 ->
       predicate_bigstep p1 t p2
   | Trans : forall p1 p2 p3 t,
-      predicate_steps p1 t p2 ->
-      predicate_steps p2 t p3 ->
+      predicate_bigstep p1 t p2 ->
+      predicate_bigstep p2 t p3 ->
       predicate_bigstep p1 t p3.
 
 Definition make_value (p : predicate) : option value :=
@@ -605,6 +634,757 @@ Proof.
     auto.
   - exists VFalse.
     auto.
+Qed.
+
+Fixpoint predicate_eqb (p1 p2 : predicate) : boolean :=
+  match (p1, p2) with
+    | (Literal n1, Literal n2) => n1 =? n2
+    | (Field n1, Field n2) => n1 =? n2
+    | (Tru, Tru) => true
+    | (Fls, Fls) => true
+    | (Plus n11 n12, Plus n21 n22) =>
+        andb (predicate_eqb n11 n21)
+             (predicate_eqb n12 n22)
+    | (Equals n11 n12, Equals n21 n22) =>
+        andb (predicate_eqb n11 n21)
+             (predicate_eqb n12 n22)
+    | (LessThan n11 n12, LessThan n21 n22) =>
+        andb (predicate_eqb n11 n21)
+             (predicate_eqb n12 n22)
+    | (Or n11 n12, Or n21 n22) =>
+        andb (predicate_eqb n11 n21)
+             (predicate_eqb n12 n22)
+    | (And n11 n12, And n21 n22) =>
+        andb (predicate_eqb n11 n21)
+             (predicate_eqb n12 n22)
+    | _ => false
+  end.
+
+Lemma predicate_eqb_eq1 : forall p1 p2,
+    p1 = p2 -> predicate_eqb p1 p2 = true.
+Proof.
+  intros p1.
+  induction p1; intros;
+    destruct p2; try discriminate;
+    auto;
+    try (injection H;
+         intros;
+         simpl;
+         try rewrite IHp1_1;
+         try rewrite IHp1_2;
+         auto);
+    try (simpl;
+         destruct (n =? n0) eqn:Heq;
+         try (apply Nat.eqb_neq in Heq);
+         auto
+      ).
+Qed.
+
+Lemma andb_prop_intro : forall b1 b2,
+    andb b1 b2 = true ->
+    b1 = true /\ b2 = true.
+Proof.
+  intros.
+  destruct b1;
+    destruct b2;
+    try discriminate.
+  auto.
+Qed.
+
+Lemma predicate_eqb_eq2 : forall p1 p2,
+    predicate_eqb p1 p2 = true -> p1 = p2.
+Proof.
+  intros p1.
+  induction p1; intros;
+    destruct p2; try discriminate;
+    auto;
+    try (
+        simpl in H;
+        apply andb_prop_intro in H;
+        destruct H;
+        apply IHp1_1 in H;
+        apply IHp1_2 in H0;
+        subst;
+        auto
+      );
+    try (
+        simpl in H;
+        apply Nat.eqb_eq in H;
+        auto
+      ).
+Qed.
+
+Lemma predicate_eqb_eq : forall p1 p2,
+    p1 = p2 <-> predicate_eqb p1 p2 = true.
+Proof.
+  intros.
+  split.
+  - apply predicate_eqb_eq1.
+  - apply predicate_eqb_eq2.
+Qed.
+
+Lemma predicate_eq_choice : forall (p1 p2 : predicate),
+    (p1 = p2) \/ (p1 <> p2).
+Proof.
+  intros.
+  destruct (predicate_eqb p1 p2) eqn:Heq.
+  - apply predicate_eqb_eq in Heq.
+    left.
+    auto.
+  - right.
+    unfold not.
+    intros.
+    apply predicate_eqb_eq in H.
+    rewrite H in Heq.
+    discriminate.
+Qed.
+
+Lemma canonical_forms_bool : forall (t : tuple) o p,
+    length t = o ->
+    well_typed o p Boolean ->
+    predicate_value p ->
+    (p = Tru) \/ (p = Fls).
+Proof.
+  intros.
+  inversion H1.
+  - inversion H0;
+      subst; discriminate.
+  - left.
+    reflexivity.
+  - right.
+    reflexivity.
+Qed.
+
+Lemma canonical_forms_number : forall (t : tuple) o p,
+    length t = o ->
+    well_typed o p Number ->
+    predicate_value p ->
+    exists n, p = Literal n.
+Proof.
+  intros.
+  inversion H1;
+    try (
+        inversion H0; subst; discriminate
+      ).
+  exists n.
+  auto.
+Qed.
+
+
+
+Lemma predicate_progress : forall (typ : type) (t : tuple)
+                             (o : nat) (p : predicate),
+    length t = o ->
+    well_typed o p typ ->
+    predicate_value p \/ exists p', predicate_steps p t p'.
+Proof.
+  intros.
+  induction H0;
+    try (
+        destruct IHwell_typed1;
+        destruct IHwell_typed2;
+        auto;
+        right
+      ).
+  - left.
+    apply LitVal.
+  - right.
+    destruct (extract_field t i) eqn:Hextract.
+    + exists (Literal n).
+      apply FieldStep.
+      apply Hextract.
+    + exfalso.
+      unfold extract_field in Hextract.
+      assert (nth_error t i <> None).
+      {
+        apply nth_error_Some.
+        rewrite <- H in H0.
+        apply H0.
+      }.
+      unfold not in H1.
+      apply H1.
+      rewrite Hextract.
+      reflexivity.
+  - left.
+    apply TruVal.
+  - left.
+    apply FlsVal.
+  - assert (HA := H).
+    apply canonical_forms_number with (p := p1) in H;
+      auto.
+    apply canonical_forms_number with (p := p2) in HA;
+      auto.
+    destruct H as [ n1 ].
+    destruct HA as [ n2 ].
+    subst.
+    exists (Literal (n1 + n2)).
+    apply Plus__value; auto.
+  - destruct H1 as [ p2' ].
+    exists (Plus p1 p2').
+    apply Plus2; auto.
+  - destruct H0 as [ p1' ].
+    exists (Plus p1' p2).
+    apply Plus1; auto.
+  - destruct H0 as [ p1' ].
+    exists (Plus p1' p2).
+    apply Plus1; auto.
+  - assert (HA := H).
+    apply canonical_forms_number with (p := p1) in H;
+      auto.
+    apply canonical_forms_number with (p := p2) in HA;
+      auto.
+    destruct H as [ n1 ].
+    destruct HA as [ n2 ].
+    destruct (n1 =? n2) eqn:Heq.
+    + apply Nat.eqb_eq in Heq.
+      subst.
+      exists (Tru).
+      apply Equalsvalue__true; auto.
+    + apply Nat.eqb_neq in Heq.
+      exists (Fls).
+      apply Equalsvalue__false; auto.
+      rewrite H.
+      rewrite H2.
+      injection.
+      intros.
+      rewrite H4 in Heq.
+      unfold not in Heq.
+      apply Heq.
+      reflexivity.
+  - destruct H1 as [ p2' ].
+    exists (Equals p1 p2').
+    apply Equals2; auto.
+  - destruct H0 as [ p1' ].
+    exists (Equals p1' p2).
+    apply Equals1; auto.
+  - destruct H0 as [ p1' ].
+    exists (Equals p1' p2).
+    apply Equals1; auto.
+  - assert (HA := H).
+    apply canonical_forms_number with (p := p1) in H;
+      auto.
+    apply canonical_forms_number with (p := p2) in HA;
+      auto.
+    destruct H as [ n1 ].
+    destruct HA as [ n2 ].
+    destruct (n1 <? n2) eqn:Hlt.
+    + apply Nat.ltb_lt in Hlt.
+      exists (Tru).
+      apply LessThanvalue__true with (n1 := n1) (n2 := n2);
+        auto.
+    + apply Nat.ltb_ge in Hlt.
+      exists Fls.
+      apply LessThanvalue__false with (n1 := n1) (n2 := n2);
+        auto.
+  - destruct H1 as [ p2' ].
+    exists (LessThan p1 p2').
+    apply LessThan2; auto.
+  - destruct H0 as [ p1' ].
+    exists (LessThan p1' p2).
+    apply LessThan1; auto.
+  - destruct H0 as [ p1' ].
+    exists (LessThan p1' p2).
+    apply LessThan1; auto.
+  - assert (HA := H).
+    apply canonical_forms_bool with (p := p1) in H;
+      auto.
+    apply canonical_forms_bool with (p := p2) in HA;
+      auto.
+    destruct H; destruct HA;
+      try (exists Fls; apply Andvalue__false; auto; fail).
+    exists Tru.
+    apply Andvalue__true; auto.
+  - destruct H1 as [ p2' ].
+    exists (And p1 p2').
+    apply And2; auto.
+  - destruct H0 as [ p1' ].
+    exists (And p1' p2).
+    apply And1; auto.
+  - destruct H0 as [ p1' ].
+    exists (And p1' p2).
+    apply And1; auto.
+  - assert (HA := H).
+    apply canonical_forms_bool with (p := p1) in H;
+      auto.
+    apply canonical_forms_bool with (p := p2) in HA;
+      auto.
+    destruct H; destruct HA;
+      try (exists Tru; apply Orvalue__true; auto; fail).
+    exists Fls.
+    apply Orvalue__false; auto.
+  - destruct H1 as [ p2' ].
+    exists (Or p1 p2').
+    apply Or2; auto.
+  - destruct H0 as [ p1' ].
+    exists (Or p1' p2).
+    apply Or1; auto.
+  - destruct H0 as [ p1' ].
+    exists (Or p1' p2).
+    apply Or1; auto.
+Qed.
+
+Lemma predicate_preservation : forall p p' (t : tuple),
+    predicate_steps p t p' ->
+    forall typ,
+    well_typed (length t) p typ ->
+    well_typed (length t) p' typ.
+Proof.
+  intros p p' t H.
+  induction H; intros.
+  - inversion H0. apply WT_Lit.
+  - inversion H3. apply WT_True.
+  - inversion H2. apply WT_False.
+  - inversion H0. apply WT_And; auto.
+  - inversion H1. apply WT_And; auto.
+  - inversion H2. apply WT_True.
+  - inversion H3. apply WT_False.
+  - inversion H0. apply WT_Or; auto.
+  - inversion H1. apply WT_Or; auto.
+  - inversion H2. apply WT_True.
+  - inversion H2. apply WT_False.
+  - inversion H0. apply WT_Equals; auto.
+  - inversion H1. apply WT_Equals; auto.
+  - inversion H4. apply WT_True.
+  - inversion H4. apply WT_False.
+  - inversion H0. apply WT_LessThan; auto.
+  - inversion H1. apply WT_LessThan; auto.
+  - inversion H3. apply WT_Lit.
+  - inversion H0. apply WT_Plus; auto.
+  - inversion H1. apply WT_Plus; auto.
+Qed.
+
+Lemma bigstep_preservation : forall (p p' : predicate)
+                               (t : tuple)
+                               (typ : type),
+    well_typed (length t) p typ ->
+    predicate_bigstep p t p' ->
+    well_typed (length t) p' typ.
+Proof.
+  intros.
+  induction H0.
+  - apply H.
+  - simpl.
+    apply predicate_preservation with (p := p1).
+    apply H0.
+    apply H.
+  - simpl.
+    apply IHpredicate_bigstep2.
+    apply IHpredicate_bigstep1.
+    apply H.
+Qed.
+
+Lemma plus_bigstep1 : forall t p1 p1' p2,
+    predicate_bigstep p1 t p1' ->
+    predicate_bigstep (Plus p1 p2) t (Plus p1' p2).
+Proof.
+  intros.
+  induction H.
+  - apply Refl.
+  - apply Steps.
+    apply Plus1.
+    auto.
+  - rename p0 into p.
+    rename p3 into p'.
+    apply Trans
+            with
+            (p2 := Plus p p2).
+    + auto.
+    + auto.
+Qed.
+
+Lemma plus_bigstep2 : forall t p1 p2 p2',
+    predicate_value p1 ->
+    predicate_bigstep p2 t p2' ->
+    predicate_bigstep (Plus p1 p2) t (Plus p1 p2').
+Proof.
+  intros.
+  induction H0.
+  - apply Refl.
+  - apply Steps.
+    apply Plus2; auto.
+  - apply Trans with
+      (p2 := Plus p1 p2); auto.
+Qed.
+
+Lemma equals_bigstep1 : forall t p1 p1' p2,
+    predicate_bigstep p1 t p1' ->
+    predicate_bigstep (Equals p1 p2) t (Equals p1' p2).
+Proof.
+  intros.
+  induction H.
+  - apply Refl.
+  - apply Steps.
+    apply Equals1; auto.
+  - apply Trans with (p2 := Equals p0 p2); auto.
+Qed.
+
+Lemma equals_bigstep2 : forall t p1 p2 p2',
+    predicate_value p1 ->
+    predicate_bigstep p2 t p2' ->
+    predicate_bigstep (Equals p1 p2) t (Equals p1 p2').
+Proof.
+  intros.
+  induction H0.
+  - apply Refl.
+  - apply Steps.
+    apply Equals2; auto.
+  - apply Trans with (p2 := Equals p1 p2); auto.
+Qed.
+
+Lemma lt_bigstep1 : forall t p1 p2 p1',
+    predicate_bigstep p1 t p1' ->
+    predicate_bigstep (LessThan p1 p2) t (LessThan p1' p2).
+Proof.
+  intros.
+  induction H.
+  - apply Refl.
+  - apply Steps.
+    apply LessThan1.
+    auto.
+  - apply Trans with (p2 := LessThan p0 p2); auto.
+Qed.
+
+Lemma lt_bigstep2 : forall t p1 p2 p2',
+    predicate_value p1 ->
+    predicate_bigstep p2 t p2' ->
+    predicate_bigstep
+      (LessThan p1 p2) t (LessThan p1 p2').
+Proof.
+  intros.
+  induction H0.
+  - apply Refl.
+  - apply Steps; auto.
+    apply LessThan2; auto.
+  - apply Trans with (p2 := LessThan p1 p2); auto.
+Qed.
+
+Lemma and_bigstep1 : forall t p1 p2 p1',
+    predicate_bigstep p1 t p1' ->
+    predicate_bigstep (And p1 p2) t (And p1' p2).
+Proof.
+  intros.
+  induction H.
+  - apply Refl.
+  - apply Steps.
+    apply And1; auto.
+  - apply Trans with (p2 := And p0 p2); auto.
+Qed.
+
+Lemma and_bigstep2 : forall t p1 p2 p2',
+    predicate_value p1 ->
+    predicate_bigstep p2 t p2' ->
+    predicate_bigstep (And p1 p2) t (And p1 p2').
+Proof.
+  intros.
+  induction H0.
+  - apply Refl.
+  - apply Steps.
+    apply And2; auto.
+  - apply Trans with (p2 := And p1 p2); auto.
+Qed.
+
+Lemma and_choice : forall p1 p2,
+    (p1 = Tru \/ p1 = Fls) ->
+    (p2 = Tru \/ p2 = Fls) ->
+    (p1 = Tru /\ p2 = Tru) \/ (p1 = Fls \/ p2 = Fls).
+Proof.
+  intros.
+  destruct H; destruct H0;
+    (try (left; split; auto; fail));
+    right; auto.
+Qed.
+
+
+Lemma or_bigstep1 : forall t p1 p1' p2,
+    predicate_bigstep p1 t p1' ->
+    predicate_bigstep (Or p1 p2) t (Or p1' p2).
+Proof.
+  intros.
+  induction H.
+  - apply Refl.
+  - apply Steps.
+    apply Or1; auto.
+  - apply Trans with (p2 := Or p0 p2); auto.
+Qed.
+
+Lemma or_bigstep2 : forall t p1 p2 p2',
+    predicate_value p1 ->
+    predicate_bigstep p2 t p2' ->
+    predicate_bigstep (Or p1 p2) t (Or p1 p2').
+Proof.
+  intros.
+  induction H0.
+  - apply Refl.
+  - apply Steps.
+    apply Or2; auto.
+  - apply Trans with (p2 := Or p1 p2); auto.
+Qed.
+
+Lemma or_choice : forall p1 p2,
+    (p1 = Tru \/ p1 = Fls) ->
+    (p2 = Tru \/ p2 = Fls) ->
+    (p1 = Tru \/ p2 = Tru) \/ (p1 = Fls /\ p2 = Fls).
+Proof.
+  intros.
+  destruct H; destruct H0; auto.
+Qed.
+
+Theorem type_soundness : forall (p : predicate) (t : tuple)
+                       (typ : type),
+  well_typed (length t) p typ ->
+  exists p',
+    predicate_bigstep p t p' /\ predicate_value p'.
+Proof.
+  intros.
+  remember (length t) as o.
+  induction H.
+  - exists (Literal n).
+    split.
+    apply Refl.
+    apply LitVal.
+  - destruct (nth_error t i) eqn:Hn.
+    + exists (Literal n).
+      split.
+      apply Steps.
+      apply FieldStep.
+      unfold extract_field. auto.
+      apply LitVal.
+    + exfalso.
+      assert (nth_error t i <> None).
+      apply nth_error_Some.
+      rewrite Heqo in H.
+      auto.
+      unfold not in H0.
+      auto.
+  - exists Tru.
+    split.
+    apply Refl.
+    apply TruVal.
+  - exists Fls.
+    split.
+    apply Refl.
+    apply FlsVal.
+  - destruct IHwell_typed1 as [ p1' ].
+    auto.
+    destruct H1.
+    assert (predicate_bigstep (Plus p1 p2) t (Plus p1' p2)).
+    apply plus_bigstep1.
+    auto.
+    assert (exists n, p1' = Literal n).
+    apply canonical_forms_number with (t := t) (o := o).
+    auto.
+    rewrite Heqo.
+    apply bigstep_preservation with (p := p1);
+      try rewrite <- Heqo; auto.
+    auto.
+    destruct IHwell_typed2 as [ p2' ].
+    auto.
+    destruct H5.
+    assert (predicate_bigstep (Plus p1' p2) t (Plus p1' p2')).
+    apply plus_bigstep2; auto.
+    assert (exists n, p2' = Literal n).
+    {
+      apply canonical_forms_number with
+        (t := t) (o := o).
+      auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p2);
+        try rewrite <- Heqo; auto.
+      auto.
+    }.
+    destruct H4 as [ n1 ].
+    destruct H8 as [ n2 ].
+    exists (Literal (n1 + n2)).
+    split.
+    + apply Trans
+              with (p2 := (Plus p1' p2)).
+      auto.
+      apply Trans
+              with (p2 := (Plus p1' p2')).
+      auto.
+      apply Steps.
+      apply Plus__value; auto.
+    + apply LitVal.
+  - simpl.
+    destruct IHwell_typed1 as [ p1' ]; auto.
+    destruct H1.
+    destruct IHwell_typed2 as [ p2' ]; auto.
+    destruct H3.
+    assert (p1' = p2' \/ p1' <> p2').
+    apply predicate_eq_choice.
+    destruct H5.
+    + exists Tru.
+      split.
+      * apply Trans
+                with (p2 := (Equals p1' p2)).
+        apply equals_bigstep1.
+        auto.
+        apply Trans with (p2 := (Equals p1' p2')).
+        apply equals_bigstep2.
+        auto.
+        auto.
+        apply Steps.
+        apply Equalsvalue__true; auto.
+    * apply TruVal.
+  + exists Fls.
+    split.
+    * apply Trans
+              with (p2 := (Equals p1' p2)).
+      apply equals_bigstep1; auto.
+      apply Trans with (p2 := Equals p1' p2').
+      apply equals_bigstep2; auto.
+      apply Steps.
+      apply Equalsvalue__false; auto.
+    * apply FlsVal.
+  - destruct IHwell_typed1; auto.
+    destruct H1.
+    rename x into p1'.
+    destruct IHwell_typed2; auto.
+    destruct H3.
+    rename x into p2'.
+    assert (exists n, p1' = Literal n).
+    {
+    apply canonical_forms_number with (t := t) (o := o);
+      auto.
+    rewrite Heqo.
+    apply bigstep_preservation
+            with (p := p1).
+    rewrite <- Heqo.
+    auto.
+    auto.
+    }.
+    destruct H5 as [ n1 ].
+    assert (exists n, p2' = Literal n).
+    {
+      apply canonical_forms_number with
+        (t := t) (o := o); auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p2).
+      rewrite <- Heqo.
+      auto.
+      auto.
+    }.
+    destruct H6 as [ n2 ].
+    assert (predicate_bigstep (LessThan p1 p2) t (LessThan p1' p2')).
+    {
+      apply Trans with
+        (p2 := LessThan p1' p2).
+      apply lt_bigstep1. auto.
+      apply Trans with
+        (p2 := LessThan p1' p2').
+      apply lt_bigstep2; auto.
+      apply Refl.
+    }.
+    destruct (n1 <? n2) eqn:Hlt.
+    + exists Tru.
+      split.
+      * apply Trans with (p2 := LessThan p1' p2').
+        auto.
+        apply Steps.
+        apply LessThanvalue__true
+                with (n1 := n1)
+                     (n2 := n2); auto.
+        apply Nat.ltb_lt. auto.
+      * apply TruVal.
+    + exists Fls.
+      split.
+      * apply Trans with (p2 := LessThan p1' p2').
+        auto.
+        apply Steps.
+        apply LessThanvalue__false
+                with (n1 := n1)
+                     (n2 := n2); auto.
+        apply Nat.ltb_ge. auto.
+      * apply FlsVal.
+  - destruct IHwell_typed1 as [ p1' ].
+    auto.
+    destruct IHwell_typed2 as [ p2' ]. auto.
+    destruct H1.
+    destruct H2.
+    assert (predicate_bigstep (And p1 p2) t (And p1' p2')).
+    {
+      apply Trans with (p2 := And p1' p2).
+      apply and_bigstep1. auto.
+      apply Trans with (p2 := And p1' p2').
+      apply and_bigstep2; auto.
+      apply Refl.
+    }.
+    assert ((p1' = Tru /\ p2' = Tru) \/ (p1' = Fls \/ p2' = Fls)).
+    {
+      apply and_choice.
+      apply canonical_forms_bool
+              with (t := t)
+                   (o := o); auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p1).
+      rewrite <- Heqo.
+      auto.
+      auto.
+      apply canonical_forms_bool
+              with (t := t)
+                   (o := o); auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p2).
+      rewrite <- Heqo.
+      auto.
+      auto.
+    }.
+    destruct H6.
+    + exists Tru.
+      split.
+      * apply Trans with (p2 := And p1' p2'); auto.
+        apply Steps.
+        destruct H6.
+        apply Andvalue__true; auto.
+      * apply TruVal.
+    + exists Fls.
+      split.
+      * apply Trans with (p2 := And p1' p2'); auto.
+        apply Steps.
+        apply Andvalue__false; auto.
+      * apply FlsVal.
+  - destruct IHwell_typed1 as [ p1' ]; auto.
+    destruct IHwell_typed2 as [ p2' ]; auto.
+    destruct H1.
+    destruct H2.
+    assert (predicate_bigstep (Or p1 p2) t (Or p1' p2')).
+    {
+      apply Trans with (p2 := Or p1' p2).
+      apply or_bigstep1; auto.
+      apply Trans with (p2 := Or p1' p2').
+      apply or_bigstep2; auto.
+      apply Refl.
+    }.
+    assert ((p1' = Tru \/ p2' = Tru) \/ (p1' = Fls /\ p2' = Fls)).
+    {
+      apply or_choice.
+      apply canonical_forms_bool with
+        (t := t) (o := o); auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p1).
+      rewrite <- Heqo.
+      auto. auto.
+      apply canonical_forms_bool with
+        (t := t) (o := o); auto.
+      rewrite Heqo.
+      apply bigstep_preservation with (p := p2).
+      rewrite <- Heqo.
+      auto. auto.
+    }.
+    destruct H6.
+    + exists Tru.
+      split.
+      apply Trans with (Or p1' p2'); auto.
+      apply Steps.
+      apply Orvalue__true; auto.
+      apply TruVal.
+    + exists Fls.
+      split.
+      apply Trans with (Or p1' p2'); auto.
+      apply Steps.
+      destruct H6.
+      apply Orvalue__false; auto.
+      apply FlsVal.
 Qed.
 
 Fixpoint eval_predicate (p : predicate) (t : tuple) : option value :=
