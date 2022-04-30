@@ -1,6 +1,7 @@
 Require Export ExtLib.Structures.Monads.
 Export MonadNotation.
 Open Scope monad_scope.
+From Coq Require Import Lia.
 From Coq Require Import Init.Nat.
 From Coq Require Import Lists.List.
 From Coq Require Import PeanoNat.
@@ -1435,6 +1436,214 @@ Fixpoint eval_predicate (p : predicate) (t : tuple) : option value :=
         end
   end.
 
+Lemma values_are_stuck : forall p t p',
+    predicate_value p ->
+    predicate_steps p t p' ->
+    False.
+Proof.
+  intros.
+  induction H; inversion H0.
+Qed.
+
+Theorem smallstep_deterministic : forall p p' p'' t,
+    predicate_steps p t p' ->
+    predicate_steps p t p'' ->
+    p' = p''.
+Proof.
+  intros p.
+  induction p; intros;
+    inversion H;
+    inversion H0;
+    auto;
+    subst;
+    try intuition;
+    try (exfalso; apply values_are_stuck with (p := p2) (t := t) (p' := p1'); auto; fail);
+    try (exfalso; apply values_are_stuck with (p := p2) (t := t) (p' := p2'); auto; fail);
+    try (exfalso; apply values_are_stuck with (p := p1) (t := t) (p' := p1'); auto; fail);
+    try (rewrite IHp1 with (p' := p1') (p'' := p1'0) (t := t); auto; fail);
+    try (rewrite IHp2 with (p' := p2') (p'' := p2'0) (t := t); auto; fail);
+    try inversion H13;
+    try inversion H14;
+    try inversion H15;
+    try inversion H5;
+    try inversion H6;
+    subst;
+    try lia.
+  *
+    injection H16.
+    auto.
+  * rewrite H2 in H6.
+    injection H6.
+    auto.
+Qed.
+
+
+
+
+
+
+Lemma singlestep_evaluation : forall p t p__i,
+    predicate_steps p t p__i ->
+    forall typ,
+    well_typed (length t) p typ ->
+    eval_predicate p t = eval_predicate p__i t.
+Proof.
+  intros p t p__i H.
+  induction H; intros;
+    try (subst; auto; fail);
+    try (
+        inversion H2; subst;
+        apply canonical_forms_bool with (t := t) in H6;
+        auto;
+        apply canonical_forms_bool with (t := t) in H8;
+        auto;
+        destruct H6; destruct H8; destruct H1;
+        subst; try discriminate; auto
+      );
+    try (
+        inversion H0; subst;
+        apply IHpredicate_steps in H4;
+        simpl; rewrite H4; auto
+      );
+    try (
+        inversion H1; subst;
+        apply IHpredicate_steps in H7; simpl;
+        rewrite H7; auto
+      ).
+  - simpl. rewrite H. auto.
+  - subst.
+    inversion H2. subst.
+    apply canonical_forms_number with (t := t) in H5;
+      auto.
+    destruct H5 as [ n ].
+    subst.
+    simpl. rewrite Nat.eqb_refl.
+    auto.
+  - inversion H2. subst.
+    apply canonical_forms_number with (t := t) in H6;
+      auto.
+    apply canonical_forms_number with (t := t) in H8;
+      auto.
+    destruct H6 as [ n1 ].
+    destruct H8 as [ n2 ].
+    assert (n1 <> n2). congruence.
+    apply Nat.eqb_neq in H5.
+    subst.
+    simpl.
+    rewrite H5. auto.
+  - apply Nat.ltb_lt in H3.
+    subst. simpl.
+    rewrite H3. auto.
+  - apply Nat.ltb_ge in H3.
+    subst.
+    simpl.
+    rewrite H3.
+    auto.
+Qed.
+
+
+
+
+Lemma multistep_evaluation : forall p p__i t typ,
+    well_typed (length t) p typ ->
+    predicate_bigstep p t p__i ->
+    eval_predicate p t = eval_predicate p__i t.
+Proof.
+  intros.
+  induction H0.
+  - auto.
+  - apply singlestep_evaluation with (typ := typ); auto.
+  - rewrite IHpredicate_bigstep1; auto.
+    apply IHpredicate_bigstep2; auto.
+    apply bigstep_preservation with (p := p1); auto.
+Qed.
+
+Lemma last_step : forall p1 p2 t typ,
+    well_typed (length t) p1 typ ->
+    predicate_steps p1 t p2 ->
+    predicate_value p2 ->
+    eval_predicate p1 t = make_value p2.
+Proof.
+  intros.
+  inversion H1;
+    try (inversion H0; subst;
+      (try (try inversion H0; fail));
+      try (subst; simpl; congruence; fail));
+    try (
+        inversion H; subst;
+        apply canonical_forms_bool with (t := t) in H9;
+        auto;
+        apply canonical_forms_bool with (t := t) in H11;
+        destruct H9; destruct H11; destruct H5;
+        subst; try discriminate; auto
+      ).
+  + simpl. rewrite H3. congruence.
+  + inversion H. subst.
+    apply canonical_forms_number with (t := t) in H7;
+      auto.
+    destruct H7 as [ n7 ].
+    subst.
+    simpl. rewrite Nat.eqb_refl. auto.
+  + apply Nat.ltb_lt in H7.
+    simpl. rewrite H7. auto.
+  + inversion H. subst.
+    apply canonical_forms_number with (t := t) in H9;
+      auto.
+    apply canonical_forms_number with (t := t) in H11;
+      auto.
+    destruct H9 as [ n1 ].
+    destruct H11 as [ n2 ].
+    assert (n1 <> n2). congruence.
+    apply Nat.eqb_neq in H7.
+    subst.
+    simpl.
+    rewrite H7.
+    auto.
+  + apply Nat.ltb_ge in H7.
+    simpl. rewrite H7.
+    auto.
+Qed.
+
+
+Theorem predicates_computable : forall p p' t typ,
+    well_typed (length t) p typ ->
+    predicate_value p' ->
+    predicate_bigstep p t p' ->
+    eval_predicate p t = make_value p'.
+Proof.
+  intros.
+  induction H1.
+  - induction H0; auto.
+  - apply last_step with (typ := typ); auto.
+  - assert (eval_predicate p1 t = eval_predicate p2 t).
+    apply multistep_evaluation
+      with (typ := typ); auto.
+    rewrite H1.
+    apply IHpredicate_bigstep2; auto.
+    apply bigstep_preservation with (p := p1);
+      auto.
+Qed.
+
+Theorem sound_evaluation : forall p t typ,
+    well_typed (length t) p typ ->
+    predicate_value p ->
+    exists v,
+      eval_predicate p t = Some v.
+Proof.
+  intros.
+  assert (exists p',
+    predicate_bigstep p t p' /\ predicate_value p').
+  apply type_soundness with (typ := typ).
+  auto.
+  destruct H1 as [ p' ].
+  destruct H1.
+  assert (exists v, make_value p' = Some v).
+  apply make_value_spec; auto.
+  destruct H3 as [ v ].
+  exists v.
+  rewrite <- H3.
+  apply predicates_computable with (typ := typ); auto.
+Qed.
 
 Inductive query : Type :=
   | Q_Table : relname -> query
