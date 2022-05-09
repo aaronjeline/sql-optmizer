@@ -208,6 +208,14 @@ Inductive value : Type :=
   | VFalse
   | VNum : nat -> value.
 
+
+Definition value_type (v : value) : type :=
+  match v with
+    | VTrue => Boolean
+    | VFalse => Boolean
+    | VNum _ => Number
+  end.
+
 Definition value_eqb v1 v2 : boolean :=
   match v1, v2 with
     | VTrue, VTrue => true
@@ -635,6 +643,22 @@ Proof.
     auto.
   - exists VFalse.
     auto.
+Qed.
+
+Lemma make_value_type_spec : forall p t o,
+    well_typed o p t ->
+    predicate_value p ->
+    exists v,
+      make_value p = Some v /\
+        value_type v = t.
+Proof.
+  intros.
+  inversion H0; rewrite <- H1 in H; inversion H;
+    subst.
+  - exists (VNum n).
+    split; auto.
+  - exists VTrue. split; auto.
+  - exists VFalse. split; auto.
 Qed.
 
 Fixpoint predicate_eqb (p1 p2 : predicate) : boolean :=
@@ -1624,11 +1648,12 @@ Proof.
       auto.
 Qed.
 
-Theorem sound_evaluation : forall p t typ,
+Theorem sound_evaluation_last : forall p t typ,
     well_typed (length t) p typ ->
     predicate_value p ->
     exists v,
-      eval_predicate p t = Some v.
+      eval_predicate p t = Some v /\
+        value_type v = typ.
 Proof.
   intros.
   assert (exists p',
@@ -1637,13 +1662,172 @@ Proof.
   auto.
   destruct H1 as [ p' ].
   destruct H1.
-  assert (exists v, make_value p' = Some v).
-  apply make_value_spec; auto.
+  assert (exists v, make_value p' = Some v /\ value_type v = typ).
+  apply make_value_type_spec with (o := length t);
+    auto.
+  apply bigstep_preservation with (p := p); auto.
   destruct H3 as [ v ].
+  destruct H3.
   exists v.
   rewrite <- H3.
-  apply predicates_computable with (typ := typ); auto.
+  split.
+  - apply predicates_computable with (typ := typ); auto.
+  - auto.
 Qed.
+
+Lemma value_number : forall v,
+    value_type v = Number ->
+    exists n, v = VNum n.
+Proof.
+  intros.
+  destruct v; try inversion H.
+  exists n. auto.
+Qed.
+
+Lemma value_boolean : forall v,
+    value_type v = Boolean ->
+    v = VTrue \/ v = VFalse.
+Proof.
+  intros.
+  destruct v; try inversion H; auto.
+Qed.
+
+
+Theorem sound_evaluation : forall p (t : tuple) typ,
+    well_typed (length t) p typ ->
+    exists v,
+      eval_predicate p t = Some v /\
+        value_type v = typ.
+Proof.
+  intros.
+  remember (length t).
+  induction H.
+  - exists (VNum n).
+    split; auto.
+  - destruct (extract_field t i) eqn:He.
+    + exists (VNum n).
+      split.
+      * simpl. rewrite He. auto.
+      * auto.
+    + unfold extract_field in He.
+      exfalso.
+      apply nth_error_None in He.
+      lia.
+  - exists VTrue. split; auto.
+  - exists VFalse. split; auto.
+  - assert ( exists v,
+        eval_predicate p1 t = Some v /\
+          value_type v =  Number
+      ).
+    apply IHwell_typed1; auto.
+    destruct H1 as [ v1 ].
+    destruct H1.
+    assert (exists v,
+               eval_predicate p2 t = Some v /\
+                 value_type v = Number).
+    apply IHwell_typed2; auto.
+    destruct H3 as [ v2 ].
+    destruct H3.
+    apply value_number in H2.
+    apply value_number in H4.
+    destruct H2 as [ n1 ].
+    destruct H4 as [ n2 ].
+    subst.
+    exists (VNum (n1 + n2)).
+    split; auto.
+    simpl.
+    rewrite H1. rewrite H3.
+    auto.
+  - assert ( exists v, eval_predicate p1 t = Some v /\
+           value_type v = Number).
+    apply IHwell_typed1; auto.
+    assert (exists v, eval_predicate p2 t = Some v /\
+           value_type v = Number).
+    apply IHwell_typed2; auto.
+    destruct H1 as [ v1 ].
+    destruct H1.
+    destruct H2 as [ v2 ].
+    destruct H2.
+    apply value_number in H3.
+    apply value_number in H4.
+    destruct H3 as [ n1 ].
+    destruct H4 as [ n2 ].
+    subst.
+    destruct (n1 =? n2) eqn:Heq.
+    + exists VTrue.
+      split.
+      * simpl. rewrite H1. rewrite H2.
+        unfold value_eqb.
+        rewrite Heq. auto.
+      * auto.
+    + exists VFalse.
+      split.
+      * simpl. rewrite H1. rewrite H2.
+        unfold value_eqb. rewrite Heq. auto.
+      * auto.
+  - assert ( exists v, eval_predicate p1 t = Some v /\
+           value_type v = Number).
+    apply IHwell_typed1; auto.
+    assert (exists v, eval_predicate p2 t = Some v /\
+           value_type v = Number).
+    apply IHwell_typed2; auto.
+    destruct H1 as [ v1 ].
+    destruct H1.
+    destruct H2 as [ v2 ].
+    destruct H2.
+    apply value_number in H3.
+    apply value_number in H4.
+    destruct H3 as [ n1 ].
+    destruct H4 as [ n2 ].
+    subst.
+    destruct (n1 <? n2) eqn:Hlt.
+    + exists VTrue.
+      split. simpl. rewrite H1. rewrite H2.
+      rewrite Hlt. auto.
+      auto.
+    + exists VFalse.
+      split. simpl. rewrite H1. rewrite H2.
+      rewrite Hlt. auto. auto.
+  - assert (exists v, eval_predicate p1 t = Some v /\
+           value_type v = Boolean).
+    apply IHwell_typed1; auto.
+    assert (exists v, eval_predicate p2 t = Some v /\
+           value_type v = Boolean).
+    apply IHwell_typed2; auto.
+    destruct H1 as [ v1 ].
+    destruct H1.
+    destruct H2 as [ v2 ].
+    destruct H2.
+    apply value_boolean in H3.
+    apply value_boolean in H4.
+    destruct H3; destruct H4;
+      try (
+          simpl; exists VFalse; rewrite H1; rewrite H2;
+          subst; auto; fail
+        ).
+    simpl. exists VTrue.
+    rewrite H1. rewrite H2.
+    subst.
+    auto.
+ - assert (exists v, eval_predicate p1 t = Some v /\ value_type v = Boolean).
+   apply IHwell_typed1; auto.
+   assert (exists v, eval_predicate p2 t = Some v /\ value_type v = Boolean).
+   apply IHwell_typed2; auto.
+   destruct H1 as [ v1 ]; destruct H1.
+   destruct H2 as [ v2 ]; destruct H2.
+   apply value_boolean in H3.
+   apply value_boolean in H4.
+   destruct H3; destruct H4;
+     try (
+         simpl; rewrite H1; rewrite H2; subst; exists VTrue; auto; fail
+       ).
+   exists VFalse. simpl.
+   rewrite H1. rewrite H2. subst. auto.
+Qed.
+
+
+
+
 
 Inductive query : Type :=
   | Q_Table : relname -> query
@@ -1667,6 +1851,10 @@ with atom : Type :=
   | Q_In : list select -> query -> atom
   | Q_Exists : query -> atom.
 
+Inductive valid_formula : nat -> formula -> Prop :=
+  | ValidForm : forall p o,
+      valid_predicate o p ->
+      valid_formula o (Q_Raw p).
 
 Inductive has_query_order : schema -> query -> nat -> Prop :=
   | Order_Table : forall sch n o,
@@ -1683,8 +1871,8 @@ Inductive has_query_order : schema -> query -> nat -> Prop :=
       has_query_order sch (Q_Join q1 q2) o
   | Order_Select : forall sch q1 f o,
       has_query_order sch q1 o ->
-      valid_predicate o f ->
-      has_query_order sch (Q_Sigma (Q_Raw f) q1) o.
+      valid_formula o f ->
+      has_query_order sch (Q_Sigma f q1) o.
 
 
 
@@ -1793,8 +1981,10 @@ Proof.
       simpl.
       apply IHq in H3.
       rewrite H3.
-      apply valid_predicate_computable in H5.
-      rewrite H5.
+      inversion H5.
+      subst.
+      apply valid_predicate_computable in H0.
+      rewrite H0.
       reflexivity.
     + intros.
       simpl in H.
@@ -1807,6 +1997,7 @@ Proof.
       apply IHq in qo.
       apply valid_predicate_computable in vp.
       apply Order_Select; auto.
+      apply ValidForm; auto.
 Qed.
 
 
@@ -2493,8 +2684,294 @@ Proof.
     reflexivity.
 Qed.
 
+Fixpoint collect {X : Type} (xs : list (option X)) :
+  option (list X) :=
+  match xs with
+    | [] => Some []
+    | ox::xs =>
+        x <- ox;;
+        xs' <- collect xs;;
+        Some (x::xs')
+  end.
 
-Definition run_formula (f : formula) (t : tuple)
+Lemma collect_spec {X : Type} : forall (xs : list (option X)),
+    In None xs <-> collect xs = None.
+Proof.
+  intros.
+  induction xs; split; intros; try (inversion H).
+  - subst. auto.
+  - simpl.
+    destruct a.
+    + assert (collect xs = None).
+      apply IHxs; auto.
+      rewrite H1.
+      auto.
+    + auto.
+  - simpl.
+    destruct a eqn:Ha.
+    + destruct (collect xs) eqn:Hxs.
+      * congruence.
+      * intuition.
+    + auto.
+Qed.
+
+
+Lemma collect_spec_inv1 {X : Type} : forall (l : list (option X)),
+    not (In None l) ->
+    exists l', collect l = Some l'.
+Proof.
+  intros.
+  induction l.
+  - exists []. auto.
+  - destruct a eqn:Ha.
+    + assert (exists l', collect l = Some l').
+      {
+        apply IHl.
+        unfold not.
+        intros.
+        unfold not in H.
+        apply H.
+        intuition.
+      }.
+      destruct H0 as [ l' ].
+      simpl.
+      rewrite H0.
+      exists (x :: l'). auto.
+    + exfalso.
+      unfold not in H.
+      apply H.
+      intuition.
+Qed.
+
+Lemma collect_spec_inv2 {X : Type} : forall (l : list (option X)),
+    (exists l', collect l = Some l') ->
+    not (In None l).
+Proof.
+  intros.
+  induction l.
+  - intuition.
+  - unfold not.
+    intros.
+    destruct H as [ l' ].
+    simpl in H.
+    destruct a eqn:Ha; try discriminate.
+    destruct (collect l) eqn:Hl; try discriminate.
+    assert (not (In None l)).
+    {
+      apply IHl.
+      exists l0.
+      auto.
+    }.
+    unfold not in H1.
+    apply H1.
+    simpl in H0.
+    inversion H0; try discriminate.
+    auto.
+Qed.
+
+Theorem collect_spec_inv {X : Type} : forall (l : list (option X)),
+    (exists l', collect l = Some l') <-> not (In None l).
+Proof.
+  intros.
+  split.
+  apply collect_spec_inv2.
+  apply collect_spec_inv1.
+Qed.
+
+Lemma collect_in1 {X : Type} : forall (l : list (option X)) (x : X),
+    In (Some x) l ->
+    collect l <> None ->
+    exists l', collect l = Some l' /\ In x l'.
+Proof.
+  intros l.
+  induction l; intros.
+  - inversion H.
+  - simpl in H.
+    inversion H.
+    + subst.
+      destruct (collect (Some x :: l)) eqn:Hcol.
+      * exists l0.
+        split; auto.
+        destruct l0.
+        -- simpl in Hcol. destruct (collect l); try discriminate.
+        -- assert (x = x0).
+           {
+             simpl in Hcol.
+             destruct (collect l) eqn:Hl; try discriminate.
+             injection Hcol.
+             intros.
+             auto.
+           }.
+           subst.
+           intuition.
+      * congruence.
+    + destruct a eqn:Ha.
+      * assert (exists l', collect l = Some l' /\ In x l').
+        {
+        apply IHl; auto.
+        simpl in H0.
+        destruct (collect l) eqn:Hl; try discriminate.
+        congruence.
+        }.
+        destruct H2 as [ l' ].
+        destruct H2.
+        exists (x0 :: l').
+        split.
+        -- simpl. destruct (collect l); try discriminate.
+           injection H2. intros. subst. auto.
+        -- simpl. auto.
+      * simpl in H0. congruence.
+Qed.
+
+Lemma collect_in2 {X : Type} : forall (l : list (option X)) (x : X),
+    (exists l', collect l = Some l' /\ In x l') ->
+    collect l <> None ->
+    In (Some x) l.
+Proof.
+  intros l.
+  induction l; intros.
+  - exfalso.
+    simpl in H0. destruct H as [ l' ].
+    destruct H.
+    simpl in H.
+    injection H.
+    intros. subst.
+    inversion H1.
+  - destruct H as [ l' ].
+    destruct H.
+    simpl.
+    destruct a eqn:Ha.
+    + simpl in H.
+      destruct (collect l) eqn:Hl.
+      * injection H. intros. subst.
+        inversion H1.
+        -- subst. auto.
+        -- right.
+           apply IHl.
+           exists l0.
+           auto.
+           congruence.
+      * discriminate.
+   + simpl in H. congruence.
+Qed.
+
+Definition run_formula (f : formula) (t : tuple) :=
+  match f with
+    | Q_Raw p =>
+        v <- eval_predicate p t;;
+        if orb (value_eqb v VTrue)
+             (value_eqb v VFalse) then
+          Some (t, v)
+        else
+          None
+  end.
+
+Lemma run_formula_spec : forall (o : nat) f (t : tuple),
+    length t = o ->
+    valid_formula o f ->
+    run_formula f t = Some (t, VTrue) \/
+      run_formula f t = Some (t, VFalse).
+Proof.
+  intros.
+  inversion H0.
+  subst.
+  inversion H1.
+  subst.
+  assert (exists v, eval_predicate p t = Some v /\
+         value_type v = Boolean).
+  apply sound_evaluation; auto.
+  destruct H2 as [ v ].
+  destruct H2.
+  apply value_boolean in H3.
+  destruct H3; simpl; rewrite H2; subst; auto.
+Qed.
+
+Definition result_is_true (p : (tuple * value)) :=
+  match p with
+    | (_, VTrue) => true
+    | _ => false
+  end.
+
+Fixpoint eval_select (f : formula) (r : relation) : option relation :=
+  results <- collect (map (run_formula f) (data r));;
+  let trues := filter result_is_true results in
+  let data' := map fst trues in
+  Some {| data := data'; order := (order r) |}.
+
+
+Lemma collect_first_eq {X : Type} : forall (l : list (option X)) o v  l',
+    collect (o :: l) = Some (v :: l') ->
+    o = Some v.
+Proof.
+  intros.
+  simpl in H.
+  destruct o; try congruence.
+  destruct (collect l); try congruence.
+Qed.
+
+
+
+
+
+
+
+
+
+
+Theorem select_preserves_order : forall (f : formula) (r : relation),
+    coherent_relation r ->
+    valid_formula (order r) f ->
+    exists r',
+      eval_select f r = Some r' ->
+      coherent_relation r'.
+Proof.
+  intros.
+  inversion H0.
+  subst.
+  simpl.
+  assert
+    (forall t, In t (data r) -> run_formula (Q_Raw p) t = Some (t, VTrue) \/
+                            run_formula (Q_Raw p) t = Some (t, VFalse)).
+  {
+    intros.
+    apply run_formula_spec with (o := order r); auto.
+  }.
+  assert (forall (pair : option (tuple * value)),
+             In pair (map (run_formula (Q_Raw p)) (data r)) ->
+             pair <> None
+    ).
+  {
+    intros.
+    assert (exists t, run_formula (Q_Raw p) t = pair /\ In t (data r)).
+    apply in_map_iff.
+    auto.
+    destruct H4 as [ t ].
+    destruct H4.
+    unfold not.
+    intros.
+    destruct H2 with (t := t); auto; congruence.
+  }.
+  destruct (collect (map (run_formula (Q_Raw p)) (data r))) eqn:Hcollect.
+  - simpl.
+    exists ({| data := map fst (filter result_is_true l); order := order r |}).
+    intros.
+    unfold coherent_relation in *.
+    intros.
+    simpl.
+    apply H.
+    simpl in H5.
+    apply in_map_iff in H5.
+    destruct H5.
+    destruct H5.
+    apply filter_In in H6.
+    destruct H6.
+    unfold result_is_true in H7.
+    destruct x. destruct v; try discriminate.
+    simpl in H5. subst.
+
+
+
+
 
 Fixpoint eval_query (q : query) (db : database) : option relation :=
   match q with
@@ -2512,7 +2989,7 @@ Fixpoint eval_query (q : query) (db : database) : option relation :=
       Some (join_relations r1 r2)
   | Q_Sigma f q =>
       r <- eval_query q db;;
-      filter f q
+      eval_select f r
   | _ => None
   end.
 
@@ -2626,6 +3103,15 @@ Proof.
     apply IHq2 with (db := db) (sch := sch); auto.
     reflexivity.
     auto.
+  - unfold compliant_relation.
+    simpl in H1.
+    destruct (eval_query q db); try congruence.
+    split.
+    + assert (exists r',
+                 eval_select f r0 = Some r' /\ coherent_relation r'
+             ).
+      apply select_preserves_order.
+
 Qed.
 
 (* Proof  *)
