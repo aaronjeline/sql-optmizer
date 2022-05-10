@@ -2945,6 +2945,60 @@ Proof.
   destruct (collect l); try congruence.
 Qed.
 
+Theorem valid_selects : forall o f r,
+    compliant_relation r o ->
+    valid_formula (order r) f ->
+    exists r',
+      eval_select f r = Some r'.
+Proof.
+  intros.
+  simpl.
+  unfold compliant_relation in H.
+  destruct H.
+  unfold coherent_relation in H.
+  assert (
+      forall t : tuple,
+        In t (data r) ->
+        (run_formula f t = Some (t, VTrue) \/
+        run_formula f t = Some (t, VFalse))
+    ).
+  {
+    intros.
+    apply run_formula_spec with (o := o).
+    rewrite <- H1.
+    apply H. auto.
+    rewrite <- H1.
+    auto.
+  }.
+  destruct f.
+  simpl.
+  assert (forall v, In v (map (run_formula (Q_Raw p)) (data r)) ->
+               (exists x, v = Some x)).
+  {
+    intros.
+    apply in_map_iff in H3.
+    destruct H3 as [ t ].
+    destruct H3.
+    assert (v = Some (t, VTrue) \/ v = Some (t, VFalse)).
+    {
+      rewrite <- H3.
+      apply H2.
+      auto.
+    }.
+    destruct H5.
+    - exists (t, VTrue). auto.
+    - exists (t, VFalse). auto.
+  }.
+  assert (collect (map (run_formula (Q_Raw p)) (data r)) <> None).
+  {
+    apply collect_forall.
+    apply H3.
+  }.
+  destruct (collect (map (run_formula (Q_Raw p)) (data r))).
+  - exists {| data := map fst (filter result_is_true l); order := order r |}.
+    auto.
+  - congruence.
+Qed.
 
 Theorem select_preserves_compliance : forall o (f : formula) (r : relation),
     compliant_relation r o ->
@@ -3273,6 +3327,20 @@ Proof.
     reflexivity.
   - subst.
     simpl.
-    destruct (eval_query q db) eqn:Hq.
-    + simpl.
-      apply eval_select_spec.
+    assert (exists r, eval_query q db = Some r).
+    apply IHq with (sch := sch) (o := o); auto.
+    destruct H1 as [ r ].
+    simpl.
+      assert (compliant_relation r o).
+      apply schema_preserves_order
+              with (q := q)
+                   (db := db)
+                   (sch := sch); auto.
+      rewrite H1.
+      apply valid_selects with (o := o).
+      + apply H2.
+      + unfold compliant_relation in H2.
+        destruct H2.
+        rewrite H3.
+        auto.
+Qed.
