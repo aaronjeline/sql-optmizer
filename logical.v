@@ -2855,6 +2855,28 @@ Proof.
    + simpl in H. congruence.
 Qed.
 
+Theorem collect_forall {X : Type} : forall (l : list (option X)),
+      (forall v, In v l -> (exists x, v = Some x)) ->
+      collect l <> None.
+Proof.
+  intros l.
+  induction l; intros.
+  - simpl. congruence.
+  - assert (exists x, a = Some x).
+    apply H.
+    intuition.
+    destruct H0 as [ x ].
+    subst.
+    simpl.
+    destruct (collect l) eqn:Hcollect.
+    + congruence.
+    + apply IHl.
+      intros.
+      apply H.
+      intuition.
+Qed.
+
+
 Definition run_formula (f : formula) (t : tuple) :=
   match f with
     | Q_Raw p =>
@@ -2886,6 +2908,20 @@ Proof.
   destruct H3; simpl; rewrite H2; subst; auto.
 Qed.
 
+Lemma run_formula_same : forall f (t t' : tuple) v,
+    run_formula f t = Some (t', v) ->
+    t = t'.
+Proof.
+  intros.
+  unfold run_formula in H.
+  destruct f.
+  destruct (eval_predicate p t) eqn:Heval; try discriminate.
+  simpl in H.
+  destruct v0 eqn:Hv0; simpl in H; try discriminate;
+    injection H; auto.
+Qed.
+
+
 Definition result_is_true (p : (tuple * value)) :=
   match p with
     | (_, VTrue) => true
@@ -2910,14 +2946,6 @@ Proof.
 Qed.
 
 
-
-
-
-
-
-
-
-
 Theorem select_preserves_order : forall (f : formula) (r : relation),
     coherent_relation r ->
     valid_formula (order r) f ->
@@ -2928,46 +2956,77 @@ Proof.
   intros.
   inversion H0.
   subst.
-  simpl.
-  assert
-    (forall t, In t (data r) -> run_formula (Q_Raw p) t = Some (t, VTrue) \/
-                            run_formula (Q_Raw p) t = Some (t, VFalse)).
-  {
+  inversion H1.
+  subst.
+  destruct (collect (map (run_formula (Q_Raw p)) (data r)))
+             eqn:Hcollect.
+  - simpl.
+    rewrite Hcollect.
+    exists {| data := map fst (filter result_is_true l); order := order r |}.
     intros.
-    apply run_formula_spec with (o := order r); auto.
-  }.
-  assert (forall (pair : option (tuple * value)),
-             In pair (map (run_formula (Q_Raw p)) (data r)) ->
-             pair <> None
-    ).
-  {
+    unfold coherent_relation.
     intros.
-    assert (exists t, run_formula (Q_Raw p) t = pair /\ In t (data r)).
+    simpl.
+    simpl in H4.
+    assert (exists p, fst p = t /\ In p (filter result_is_true l)).
+    apply in_map_iff. auto.
+    destruct H5 as [ pr ].
+    destruct H5.
+    destruct pr.
+    assert (In (t0, v) l /\ result_is_true (t0, v) = true).
+    apply filter_In. auto.
+    destruct H7.
+    unfold result_is_true in H8.
+    destruct v; try discriminate.
+    assert (In (Some (t0, VTrue)) (map (run_formula (Q_Raw p)) (data r))).
+    apply collect_in2.
+    exists l. split; auto.
+    congruence.
+    assert (exists t__orig, run_formula (Q_Raw p) t__orig = Some (t0, VTrue) /\ In t__orig (data r)).
+    apply in_map_iff. auto.
+    destruct H10 as [ t__orig ].
+    destruct H10.
+    assert (t__orig = t0).
+    apply run_formula_same with
+      (f := (Q_Raw p))
+      (v := VTrue).
+    auto.
+    subst.
+    simpl.
+    unfold coherent_relation in H.
+    apply H.
+    auto.
+  - exfalso.
+    assert ((collect (map (run_formula (Q_Raw p)) (data r))) <> None).
+    apply collect_forall.
+    intros.
+    assert (exists t, run_formula (Q_Raw p) t = v /\ In t (data r)).
     apply in_map_iff.
     auto.
     destruct H4 as [ t ].
     destruct H4.
-    unfold not.
-    intros.
-    destruct H2 with (t := t); auto; congruence.
-  }.
-  destruct (collect (map (run_formula (Q_Raw p)) (data r))) eqn:Hcollect.
-  - simpl.
-    exists ({| data := map fst (filter result_is_true l); order := order r |}).
-    intros.
-    unfold coherent_relation in *.
-    intros.
-    simpl.
-    apply H.
-    simpl in H5.
-    apply in_map_iff in H5.
-    destruct H5.
-    destruct H5.
-    apply filter_In in H6.
+    assert (
+    run_formula (Q_Raw p) t = Some (t, VTrue) \/
+      run_formula (Q_Raw p) t = Some (t, VFalse)).
+    {
+      apply run_formula_spec with (o := order r).
+      unfold coherent_relation in H.
+      apply H. auto.
+      auto.
+    }.
     destruct H6.
-    unfold result_is_true in H7.
-    destruct x. destruct v; try discriminate.
-    simpl in H5. subst.
+    + exists (t, VTrue).
+      rewrite <- H4. rewrite H6.
+      auto.
+    + exists (t, VFalse).
+      rewrite <- H4. rewrite H6.
+      auto.
+    + rewrite Hcollect in H3. congruence.
+Qed.
+
+
+
+
 
 
 
