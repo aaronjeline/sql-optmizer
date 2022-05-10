@@ -2946,12 +2946,12 @@ Proof.
 Qed.
 
 
-Theorem select_preserves_order : forall (f : formula) (r : relation),
-    coherent_relation r ->
+Theorem select_preserves_compliance : forall o (f : formula) (r : relation),
+    compliant_relation r o ->
     valid_formula (order r) f ->
-    exists r',
+    (forall r',
       eval_select f r = Some r' ->
-      coherent_relation r'.
+      compliant_relation r' o).
 Proof.
   intros.
   inversion H0.
@@ -2961,22 +2961,25 @@ Proof.
   destruct (collect (map (run_formula (Q_Raw p)) (data r)))
              eqn:Hcollect.
   - simpl.
-    rewrite Hcollect.
-    exists {| data := map fst (filter result_is_true l); order := order r |}.
+    injection H4.
     intros.
+    rewrite <- H3.
+    intros.
+    unfold compliant_relation.
     unfold coherent_relation.
+    split.
     intros.
     simpl.
     simpl in H4.
     assert (exists p, fst p = t /\ In p (filter result_is_true l)).
     apply in_map_iff. auto.
-    destruct H5 as [ pr ].
-    destruct H5.
+    destruct H6 as [ pr ].
+    destruct H6.
     destruct pr.
     assert (In (t0, v) l /\ result_is_true (t0, v) = true).
     apply filter_In. auto.
-    destruct H7.
-    unfold result_is_true in H8.
+    destruct H8.
+    unfold result_is_true in H9.
     destruct v; try discriminate.
     assert (In (Some (t0, VTrue)) (map (run_formula (Q_Raw p)) (data r))).
     apply collect_in2.
@@ -2984,8 +2987,8 @@ Proof.
     congruence.
     assert (exists t__orig, run_formula (Q_Raw p) t__orig = Some (t0, VTrue) /\ In t__orig (data r)).
     apply in_map_iff. auto.
-    destruct H10 as [ t__orig ].
-    destruct H10.
+    destruct H11 as [ t__orig ].
+    destruct H11.
     assert (t__orig = t0).
     apply run_formula_same with
       (f := (Q_Raw p))
@@ -2996,6 +2999,10 @@ Proof.
     unfold coherent_relation in H.
     apply H.
     auto.
+    simpl.
+    unfold compliant_relation in H.
+    destruct H.
+    auto.
   - exfalso.
     assert ((collect (map (run_formula (Q_Raw p)) (data r))) <> None).
     apply collect_forall.
@@ -3003,8 +3010,8 @@ Proof.
     assert (exists t, run_formula (Q_Raw p) t = v /\ In t (data r)).
     apply in_map_iff.
     auto.
-    destruct H4 as [ t ].
-    destruct H4.
+    destruct H5 as [ t ].
+    destruct H5.
     assert (
     run_formula (Q_Raw p) t = Some (t, VTrue) \/
       run_formula (Q_Raw p) t = Some (t, VFalse)).
@@ -3014,14 +3021,14 @@ Proof.
       apply H. auto.
       auto.
     }.
-    destruct H6.
+    destruct H7.
     + exists (t, VTrue).
-      rewrite <- H4. rewrite H6.
+      rewrite <- H5. rewrite H7.
       auto.
     + exists (t, VFalse).
-      rewrite <- H4. rewrite H6.
+      rewrite <- H5. rewrite H7.
       auto.
-    + rewrite Hcollect in H3. congruence.
+    + congruence.
 Qed.
 
 
@@ -3162,15 +3169,28 @@ Proof.
     apply IHq2 with (db := db) (sch := sch); auto.
     reflexivity.
     auto.
-  - unfold compliant_relation.
-    simpl in H1.
-    destruct (eval_query q db); try congruence.
-    split.
-    + assert (exists r',
-                 eval_select f r0 = Some r' /\ coherent_relation r'
-             ).
-      apply select_preserves_order.
-
+  - simpl in H1.
+    destruct (eval_query q db) eqn:Hq; try discriminate.
+    inversion H0.
+    subst.
+    rename q into q0.
+    assert (compliant_relation r0 o).
+    {
+      apply IHq with (db := db) (sch := sch); auto.
+    }.
+    assert (forall r',
+               eval_select f r0 = Some r' ->
+              compliant_relation r' o).
+    {
+      apply select_preserves_compliance.
+      apply IHq with (db := db) (sch := sch); auto.
+      unfold compliant_relation in H2.
+      destruct H2.
+      rewrite H3.
+      auto.
+    }.
+    apply H3.
+    auto.
 Qed.
 
 (* Proof  *)
@@ -3251,4 +3271,8 @@ Proof.
     rewrite H1.
     rewrite H2.
     reflexivity.
-Qed.
+  - subst.
+    simpl.
+    destruct (eval_query q db) eqn:Hq.
+    + simpl.
+      apply eval_select_spec.
