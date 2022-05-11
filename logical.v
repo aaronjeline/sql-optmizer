@@ -32,6 +32,24 @@ Fixpoint nth {X : Type} (lst : list X) (n : nat) : option X :=
         end
   end.
 
+Theorem nth_spec {X: Type} : forall (lst : list X) n,
+    n < length lst ->
+    exists x,
+      nth lst n  = Some x.
+Proof.
+  intros lst.
+  induction lst; intros.
+  - inversion H.
+  - destruct n.
+    + simpl. exists a. auto.
+    + simpl.
+      apply IHlst.
+      simpl in H.
+      Search lt.
+      apply Lt.lt_S_n.
+      auto.
+Qed.
+
 Definition tuple := list nat.
 (* This is a database table *)
 Record relation : Type :=
@@ -1872,7 +1890,12 @@ Inductive has_query_order : schema -> query -> nat -> Prop :=
   | Order_Select : forall sch q1 f o,
       has_query_order sch q1 o ->
       valid_formula o f ->
-      has_query_order sch (Q_Sigma f q1) o.
+      has_query_order sch (Q_Sigma f q1) o
+  | Order_Pi : forall sch q flds o,
+      has_query_order sch q o ->
+      length flds < o ->
+      (forall n, In n flds -> n < o) ->
+      has_query_order sch (Q_Pi flds q) (length flds).
 
 
 
@@ -1897,7 +1920,14 @@ Fixpoint query_order (sch : schema) (q : query) : option nat :=
             Some o
           else
             None
-      | _ => None
+      | Q_Pi flds q =>
+          o <- query_order sch q;;
+          let smaller := length flds <? o in
+          let all_valid := forallb (fun fld => fld <? o) flds in
+          if andb smaller all_valid then
+            Some (length flds)
+          else
+            None
     end.
 
 Theorem has_query_equiv : forall q sch n,
@@ -1972,8 +2002,44 @@ Proof.
   - split.
     + intros.
       inversion H.
+      subst.
+      assert (query_order sch q = Some o).
+      apply IHq.
+      auto.
+      simpl.
+      rewrite H0.
+      assert (forallb (fun fld => fld <? o) l = true).
+      apply forallb_forall.
+      intros.
+      apply Nat.ltb_lt.
+      apply H6. auto.
+      rewrite H1.
+      assert (length l <? o = true).
+      apply Nat.ltb_lt.
+      auto.
+      rewrite H3.
+      auto.
     + intros.
-      discriminate.
+      simpl in H.
+      destruct (query_order sch q) eqn:Horder; try discriminate.
+      destruct (forallb (fun fld => fld <? n0) l) eqn:Forall;
+        destruct (length l <? n0) eqn:Len; try discriminate.
+      simpl in H.
+      injection H.
+      intros.
+      rewrite <- H0.
+      apply Order_Pi with (o := n0).
+      apply IHq.
+      auto.
+      apply Nat.ltb_lt.
+      auto.
+      assert (forall n, In n l -> n <? n0 = true).
+      apply forallb_forall.
+      auto.
+      intros.
+      apply Nat.ltb_lt.
+      apply H1.
+      auto.
   - split.
     intros.
     + inversion H.
@@ -2855,7 +2921,7 @@ Proof.
    + simpl in H. congruence.
 Qed.
 
-Theorem collect_forall {X : Type} : forall (l : list (option X)),
+Lemma collect_forall1 {X : Type} : forall (l : list (option X)),
       (forall v, In v l -> (exists x, v = Some x)) ->
       collect l <> None.
 Proof.
@@ -2876,6 +2942,34 @@ Proof.
       intuition.
 Qed.
 
+Lemma collect_forall2 {X : Type} : forall (l : list (option X)),
+      collect l <> None ->
+      (forall v, In v l -> (exists x, v = Some x)).
+Proof.
+  intros l.
+  induction l; intros.
+  - inversion H0.
+  - inversion H0.
+    + simpl in H.
+      destruct a eqn:Ha; try congruence.
+      destruct (collect l); try congruence.
+      exists x.
+      symmetry.
+      apply H1.
+    + apply IHl.
+      simpl in H.
+      destruct a eqn:Ha; try congruence.
+      destruct (collect l) eqn:Hc; try congruence.
+      auto.
+Qed.
+
+Theorem collect_forall {X : Type} : forall (l : list (option X)),
+    collect l <> None <-> (forall v, In v l -> (exists x, v = Some x)).
+Proof.
+  split.
+  apply collect_forall2.
+  apply collect_forall1.
+Qed.
 
 Definition run_formula (f : formula) (t : tuple) :=
   match f with
@@ -3090,6 +3184,193 @@ Qed.
 
 
 
+Lemma collect_preserves_length {X : Type} : forall l (l' : list X),
+    collect l = Some l' ->
+    length l = length l'.
+Proof.
+  intros l.
+  induction l; intros.
+  - simpl in H.
+    injection H.
+    intros.
+    subst.
+    auto.
+  - destruct l' eqn:Hl'.
+    + simpl in H.
+      destruct a; try discriminate.
+      destruct (collect l); try discriminate.
+    + simpl.
+      assert (length l = length l0).
+      apply IHl.
+      simpl in H.
+      destruct a eqn:Ha; try discriminate.
+      destruct (collect l) eqn:Hl; try discriminate.
+      injection H.
+      intros.
+      subst. auto.
+      rewrite H0.
+      auto.
+Qed.
+
+Definition do_projection (flds : list select) (t : tuple) : option tuple :=
+  collect (map (fun fld => nth t fld) flds).
+
+
+Lemma projection_spec1 : forall flds t,
+    (forall f, In f flds -> f < (length t)) ->
+    exists t',
+      do_projection flds t = Some t' /\ length t' = length flds.
+Proof.
+  intros.
+  unfold do_projection.
+  assert (collect (map (fun fld => nth t fld) flds) <> None).
+  {
+    apply collect_forall.
+    intros.
+    apply in_map_iff in H0.
+    destruct H0.
+    destruct H0.
+    rewrite <- H0.
+    apply nth_spec.
+    auto.
+  }.
+  destruct (collect (map (fun fld => nth t fld) flds)) eqn:Hcollect.
+  - exists l.
+    split; auto.
+    remember (map (fun fld => nth t fld) flds) as mapped.
+    assert (length mapped = length flds).
+    {
+      rewrite Heqmapped.
+      apply map_length.
+    }.
+    rewrite <- H1.
+    symmetry.
+    apply collect_preserves_length.
+    auto.
+  - congruence.
+Qed.
+
+
+Definition eval_pi (flds : list select) (r : relation) : option relation :=
+  let new_order := (length flds) in
+  new_data <- collect (map (do_projection flds) (data r));;
+  Some {| data := new_data; order := new_order |}.
+
+Lemma eval_pi_sound_helper : forall (flds : list select) (r : relation) (o : nat),
+    compliant_relation r o ->
+    length flds < o ->
+    (forall fld, In fld flds -> fld < o) ->
+    exists d,
+      collect (map (do_projection flds) (data r)) = Some d.
+Proof.
+  intros.
+  assert (collect (map (do_projection flds) (data r)) <> None).
+  {
+    apply collect_forall.
+    intros.
+    apply in_map_iff in H2.
+    destruct H2 as [ t ].
+    destruct H2.
+    rewrite <- H2.
+    assert (exists t', do_projection flds t = Some t' /\ length t' = length flds).
+    {
+      apply projection_spec1.
+      intros.
+      unfold compliant_relation in H.
+      destruct H.
+      unfold coherent_relation in H.
+      rewrite H.
+      rewrite H5.
+      auto.
+      auto.
+  }.
+    destruct H4 as [ t' ].
+    destruct H4.
+    exists t'. auto.
+    }.
+  destruct (collect (map (do_projection flds) (data r))) eqn:Hcollect; try congruence.
+  exists l. auto.
+Qed.
+
+Lemma eval_pi_sound_helper2 : forall flds r o d,
+    compliant_relation r o ->
+    length flds < o ->
+    (forall f, In f flds -> f < o) ->
+    collect (map (do_projection flds) (data r)) = Some d ->
+    (forall t, In t d -> length t = length flds).
+Proof.
+  intros.
+  assert (forall t, (In t (data r)) -> exists t', do_projection flds t = Some t' /\ length t' = length flds).
+  {
+    simpl.
+    intros.
+    apply projection_spec1.
+    intros.
+    unfold compliant_relation in H.
+    destruct H.
+    unfold coherent_relation in H.
+    assert (length t0 = order r).
+    apply H.
+    auto.
+    rewrite H7.
+    rewrite H6.
+    apply H1.
+    auto.
+  }.
+  assert (
+      In (Some t) (map (do_projection flds) (data r))
+    ).
+  {
+    apply collect_in2.
+    - exists d.
+      auto.
+    - simpl.
+      congruence.
+  }.
+  apply in_map_iff in H5.
+  destruct H5 as [ t__o ].
+  destruct H5.
+  assert (exists t', do_projection flds t__o = Some t' /\ length t' = length flds).
+  apply H4.
+  auto.
+  destruct H7 as [ t' ].
+  destruct H7.
+  rewrite H7 in H5.
+  injection H5.
+  intros.
+  subst.
+  auto.
+Qed.
+
+Theorem eval_pi_sound : forall (flds : list select) (r : relation) (o : nat),
+    compliant_relation r o ->
+    length flds < o ->
+    (forall fld, In fld flds -> fld < o) ->
+    exists r',
+      eval_pi flds r = Some r' /\ compliant_relation r' (length flds).
+Proof.
+  intros.
+  unfold eval_pi.
+  assert (exists d,
+      collect (map (do_projection flds) (data r)) = Some d).
+  apply eval_pi_sound_helper with (o := o); auto.
+  destruct H2 as [ d ].
+  exists {| data := d; order := length flds |}.
+  rewrite H2.
+  simpl.
+  split; auto.
+  assert (forall t, In t d -> length t = length flds).
+  apply eval_pi_sound_helper2 with (r := r) (o := o); auto.
+  unfold compliant_relation.
+  split.
+  - unfold coherent_relation. intros.
+    simpl.
+    apply H3.
+    auto.
+  - simpl.
+    auto.
+Qed.
+
 
 
 
@@ -3110,7 +3391,9 @@ Fixpoint eval_query (q : query) (db : database) : option relation :=
   | Q_Sigma f q =>
       r <- eval_query q db;;
       eval_select f r
-  | _ => None
+  | Q_Pi flds q =>
+      r <- eval_query q db;;
+      eval_pi flds r
   end.
 
 
@@ -3223,6 +3506,25 @@ Proof.
     apply IHq2 with (db := db) (sch := sch); auto.
     reflexivity.
     auto.
+  - simpl.
+    inversion H0. subst.
+    simpl in H1.
+    destruct (eval_query q db) eqn:Hq; try discriminate.
+    assert (compliant_relation r0 o0).
+    apply IHq with (db := db) (sch := sch); auto.
+    assert (
+    exists r',
+      eval_pi l r0 = Some r' /\ compliant_relation r' (length l)).
+    {
+      apply eval_pi_sound with (o := o0); auto.
+    }.
+    destruct H3 as [ r' ].
+    destruct H3.
+    rewrite H3 in H1.
+    injection H1.
+    intros.
+    subst.
+    auto.
   - simpl in H1.
     destruct (eval_query q db) eqn:Hq; try discriminate.
     inversion H0.
@@ -3325,6 +3627,25 @@ Proof.
     rewrite H1.
     rewrite H2.
     reflexivity.
+  - subst.
+    simpl.
+    assert (exists r, eval_query q db = Some r).
+    apply IHq with (sch := sch) (o := o0); auto.
+    destruct H1 as [ r1 ].
+    rewrite H1.
+    assert (
+    exists r',
+      eval_pi l r1 = Some r' /\ compliant_relation r' (length l)).
+    apply eval_pi_sound with (o := o0); auto.
+    apply schema_preserves_order
+            with
+            (q := q)
+            (db := db)
+            (sch := sch); auto.
+    destruct H2 as [ r' ].
+    destruct H2.
+    exists r'.
+    apply H2.
   - subst.
     simpl.
     assert (exists r, eval_query q db = Some r).
